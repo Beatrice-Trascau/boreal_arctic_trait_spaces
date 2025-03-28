@@ -97,7 +97,7 @@ all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundr
                          setdiff(tundra_species, boreal_species) %in% common_species))
 
 # Save species list
-#save(all_filtered_species, file = here("data", "derived_data", "try_filtered.RData"))
+#save(all_filtered_species, file = here("data", "derived_data", "all_filtered_species.RData"))
 
 # 4. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
@@ -131,7 +131,7 @@ biomes_polar_proj <- ggplot() +
   geom_sf(data = try_sf_polar[boreal_indices,], color = "darkgreen", size = 0.8, alpha = 0.7) +
   geom_sf(data = try_sf_polar[tundra_indices,], color = "blue", size = 0.8, alpha = 0.7) +
   # Set extent
-  coord_sf(crs = projchoice, 
+  coord_sf(crs = proj_choice, 
            ylim = c(-703086, 7071423), 
            xlim = c(-505347.4, 8526158)) +
   theme_bw() +
@@ -151,6 +151,6 @@ biomes_polar_proj <- ggplot() +
 
 # Save figure
 # ggsave(filename = here("figures", "Figure1_biomes_and_points.png"),
-#        plot = biomes_polar_proj, width = 20, height = 16, dpi = 300)
+#        plot = biomes_polar_proj, width = 16, height = 12, dpi = 300)
 
 # END OF SCRIPT ----------------------------------------------------------------
