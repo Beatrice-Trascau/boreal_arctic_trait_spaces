@@ -73,7 +73,7 @@ tundra_try_data$biome <- "tundra"
 try_filtered <- rbind(boreal_try_data, tundra_try_data)
 
 # Save filtered data to file
-save(try_filtered, file = here("data", "derived_data", "try_filtered.RData"))
+#save(try_filtered, file = here("data", "derived_data", "try_filtered.RData"))
 
 # 3.3 Extract species list -----------------------------------------------------
 
@@ -97,7 +97,7 @@ all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundr
                          setdiff(tundra_species, boreal_species) %in% common_species))
 
 # Save species list
-save(all_filtered_species, file = here("data", "derived_data", "try_filtered.RData"))
+#save(all_filtered_species, file = here("data", "derived_data", "try_filtered.RData"))
 
 # 4. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
@@ -150,7 +150,7 @@ biomes_polar_proj <- ggplot() +
          color = guide_legend(title = "Records"))
 
 # Save figure
-ggsave(filename = here("figures", "Figure1_biomes_and_points.png"),
-       plot = biomes_polar_proj, width = 20, height = 16, dpi = 300)
+# ggsave(filename = here("figures", "Figure1_biomes_and_points.png"),
+#        plot = biomes_polar_proj, width = 20, height = 16, dpi = 300)
 
 # END OF SCRIPT ----------------------------------------------------------------
