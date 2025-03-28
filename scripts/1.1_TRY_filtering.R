@@ -71,3 +71,86 @@ tundra_try_data$biome <- "tundra"
 
 # Combine the two
 try_filtered <- rbind(boreal_try_data, tundra_try_data)
+
+# Save filtered data to file
+save(try_filtered, file = here("data", "derived_data", "try_filtered.RData"))
+
+# 3.3 Extract species list -----------------------------------------------------
+
+# Extract unique species for each biome
+boreal_species <- unique(boreal_try_data$AccSpeciesName)
+tundra_species <- unique(tundra_try_data$AccSpeciesName)
+
+# Get species present in both biomes
+common_species <- intersect(boreal_species, tundra_species)
+
+# Find unique species to each biome
+unique_boreal_species <- setdiff(boreal_species, tundra_species)
+unique_tundra_species <- setdiff(tundra_species, boreal_species)
+
+# Create summary dataframe
+all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundra_species, 
+                                                                  boreal_species)),
+                          Biome = c(rep("Boreal", length(boreal_species)), 
+                                    rep("Tundra", length(setdiff(tundra_species, boreal_species)))),
+                          SharedAcrossBiomes = c(boreal_species %in% common_species, 
+                         setdiff(tundra_species, boreal_species) %in% common_species))
+
+# Save species list
+save(all_filtered_species, file = here("data", "derived_data", "try_filtered.RData"))
+
+# 4. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
+
+# Get world basemap
+world <- ne_countries(scale = "medium", returnclass = "sf")
+
+# Define polar projection
+proj_choice<-"+proj=laea +lat_0=90 +lon_0=0 +x_0=4321000 +y_0=3210000 +ellps=GRS80 +units=m +no_defs "
+
+# Transform all spatial objects to the polar projection
+world_polar <- st_transform(world, crs = proj_choice)
+boreal_forest_polar <- st_transform(boreal_forest, crs = proj_choice)
+tundra_polar <- st_transform(tundra, crs = proj_choice)
+try_sf_polar <- st_transform(try_sf, crs = proj_choice)
+
+# Define custom colors for biomes
+mycols <- c("forestgreen", "skyblue")
+
+# Combine the boreal and tundra data for the legend
+biome_data <- rbind(
+  cbind(st_drop_geometry(data.frame(BIOME = 6)), st_geometry(boreal_forest_polar)) |> st_sf(),
+  cbind(st_drop_geometry(data.frame(BIOME = 11)), st_geometry(tundra_polar)) |> st_sf())
+
+# Create map with polar projection
+biomes_polar_proj <- ggplot() +
+  # Add biomes
+  geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA) +
+  # Add country outlines
+  geom_sf(data = world_polar, fill = NA, color = "darkgray", size = 0.2) +
+  # Add points
+  geom_sf(data = try_sf_polar[boreal_indices,], color = "darkgreen", size = 0.8, alpha = 0.7) +
+  geom_sf(data = try_sf_polar[tundra_indices,], color = "blue", size = 0.8, alpha = 0.7) +
+  # Set extent
+  coord_sf(crs = projchoice, 
+           ylim = c(-703086, 7071423), 
+           xlim = c(-505347.4, 8526158)) +
+  theme_bw() +
+  theme(axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        legend.position = c(0.2, 0.9),
+        plot.title = element_text(face = "bold"),
+        panel.grid.major = element_line(color = "gray90", linetype = "dashed"),
+        panel.grid.minor = element_blank()) +
+  # Add custom colours and legend values
+  scale_fill_manual(values = mycols,
+                    labels = c("Boreal forest", "Arctic tundra"),
+                    name = "Biome") +
+  # Add point legend
+  guides(fill = guide_legend(title = "Biome"),
+         color = guide_legend(title = "Records"))
+
+# Save figure
+ggsave(filename = here("figures", "Figure1_biomes_and_points.png"),
+       plot = biomes_polar_proj, width = 20, height = 16, dpi = 300)
+
+# END OF SCRIPT ----------------------------------------------------------------
