@@ -26,9 +26,48 @@ boreal_forest <- st_union(global_biomes[global_biomes$BIOME == 6,])
 # Load Tundra (BIOME = 11)
 tundra <- st_union(global_biomes[global_biomes$BIOME == 11 &(global_biomes$REALM == "PA"|global_biomes$REALM == "NA"), ])
 
-# Combine Boreal Forest and Tundra polygons
-boreal_and_tundra <- st_intersection(boreal_forest, tundra)
-
 # Make sure boreal_forest and tundra are valid geometries
 boreal_forest <- st_make_valid(boreal_forest)
 tundra <- st_make_valid(tundra)
+
+# Check CRS
+biome_crs <- st_crs(boreal_forest)
+
+# 3. FILTER TRY RECORDS --------------------------------------------------------
+
+## 3.1. Convert TRY database to spatial object ---------------------------------
+
+# Convert TRY to sf object
+try_sf <- st_as_sf(try_raw, coords = c("LON_site", "LAT_site"), crs = 4326) |>
+  st_transform(biome_crs)  # make sure CRS is the same as the biomes
+
+# Make sure that the CRS of the biomes and TRY data match
+cat("CRS of TRY data:", st_crs(try_sf)$input, "\n")
+cat("CRS of boreal forest:", st_crs(boreal_forest)$input, "\n")
+cat("CRS of tundra:", st_crs(tundra)$input, "\n") # looks good
+
+# Check geometries are valid
+boreal_forest <- st_make_valid(boreal_forest)
+tundra <- st_make_valid(tundra)
+try_sf <- st_make_valid(try_sf)
+
+## 3.2. Filter out records falling outside of the biome boundaries -------------
+
+# Filter records within biomes
+boreal_try <- st_intersects(try_sf, boreal_forest)
+tundra_try <- st_intersects(try_sf, tundra)
+
+# Convert the sparse geometry index to regular indices
+boreal_indices <- which(lengths(boreal_try) > 0)
+tundra_indices <- which(lengths(tundra_try) > 0)
+
+# Extract original data for both biomes
+boreal_try_data <- try_raw[boreal_indices, ]
+tundra_try_data <- try_raw[tundra_indices, ]
+
+# Add biome classification
+boreal_try_data$biome <- "boreal"
+tundra_try_data$biome <- "tundra"
+
+# Combine the two
+try_filtered <- rbind(boreal_try_data, tundra_try_data)
