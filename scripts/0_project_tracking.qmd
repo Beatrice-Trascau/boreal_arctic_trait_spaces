@@ -193,6 +193,50 @@ legend("bottomright", legend = c("Boreal Forest", "Tundra"),
        fill = c(adjustcolor("forestgreen", alpha.f = 0.4), adjustcolor("skyblue", alpha.f = 0.4)))
 ```
 
+### Species List Cleaning: 1. Removing morphospecies
+
+From the original species list, 30 records contained morphospecies. Therefore, the following records were removed from our species list.
+
+```{r morphospecies-list-table}
+#| label: morphospecies-list-table
+#| tbl-cap: Morphospecies removed from species list
+#| echo: false
+#| message: false
+#| warning: false
+
+removed_species |>
+  kable(format = "latex", booktabs = TRUE,
+        longtable = TRUE) |>
+  kable_styling(latex_options = c("striped", "repeat_header"),
+                font_size = 9,
+                full_width = FALSE) |>
+  column_spec(1, italic = TRUE) |>
+  collapse_rows(columns = 2, latex_hline = "major", valign = "middle")
+
+```
+
+### Species List Cleaning: 2. Standardise subspecies & varieties to species level
+
+In total, 22 records in the species list are subspecies or varieties.
+
+```{r subspecies-list-table}
+#| label: subspecies-list-table
+#| tbl-cap: Subspecies standardised in species list
+#| echo: false
+#| message: false
+#| warning: false
+
+subspecies_varieties |>
+  kable(format = "latex", booktabs = TRUE,
+        longtable = TRUE) |>
+  kable_styling(latex_options = c("striped", "repeat_header"),
+                font_size = 9,
+                full_width = FALSE) |>
+  column_spec(1, italic = TRUE) |>
+  collapse_rows(columns = 2, latex_hline = "major", valign = "middle")
+
+```
+
 ```{r species-list-table}
 #| label: species-list-table
 #| tbl-cap: Species List in Each Biome
