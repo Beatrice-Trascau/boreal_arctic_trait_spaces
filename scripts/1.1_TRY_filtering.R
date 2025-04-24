@@ -117,6 +117,50 @@ removed_species <- anti_join(all_filtered_species, filtered_species_list,
                              by = "SpeciesName")
 print(removed_species)
 
+## 3.5. Standardise subspecies/varieties to species level ----------------------
+
+# Extract list of subspecies/varieties
+subspecies_varieties <- filtered_species_list |>
+  filter(grepl("subsp\\.", SpeciesName) | 
+           grepl("var\\.", SpeciesName) |
+           grepl("sect\\.", SpeciesName))
+
+# Count how many records there were in each group
+subspecies_count <- sum(grepl("subsp\\.", filtered_species_list$SpeciesName))
+varieties_count <- sum(grepl("var\\.", filtered_species_list$SpeciesName))
+sections_count <- sum(grepl("sect\\.", filtered_species_list$SpeciesName))
+
+# Print results
+cat("Total records with subspecies/varieties/sections:", nrow(subspecies_varieties), "\n")
+cat("Subspecies (subsp.):", subspecies_count, "\n")
+cat("Varieties (var.):", varieties_count, "\n")
+cat("Sections (sect.):", sections_count, "\n")
+
+# Standardise records
+standardised_subspecies <- subspecies_varieties |>
+  # replace everything after and including "subsp.", "var.", or "sect." with nothing
+  mutate(StandardSpeciesName = str_replace(SpeciesName, " (subsp\\.|var\\.|sect\\.).*$", "")) %>%
+  # use the standardized name instead of the original
+  select(SpeciesName = StandardSpeciesName, Biome, SharedAcrossBiomes)
+
+# Get species names that do not have subspecies/varieties etc
+regular_species <- filtered_species_list |>
+  filter(!grepl("subsp\\.", SpeciesName) &
+         !grepl("var\\.", SpeciesName) &
+         !grepl("sect\\.", SpeciesName))
+
+# Combine the datasets and remove duplicates
+standardised_species_list <- bind_rows(regular_species,
+                                       standardised_subspecies) |>
+  distinct()
+
+# Check the counts
+cat("Original filtered species count:", nrow(filtered_species_list), "\n")
+cat("Number of subspecies/varieties found:", nrow(subspecies_varieties), "\n")
+cat("Number of regular species:", nrow(regular_species), "\n")
+cat("Final standardized species count:", nrow(standardised_species_list), "\n")
+
+
 # Save species list
 #save(all_filtered_species, file = here("data", "derived_data", "all_filtered_species.RData"))
 
