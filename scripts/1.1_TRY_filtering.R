@@ -18,7 +18,7 @@ glimpse(try_raw)
 
 # Load WWF biomes
 # Citation: Olson, D. M., Dinerstein, E., Wikramanayake, E. D., Burgess, N. D., Powell, G. V. N., Underwood, E. C., D'Amico, J. A., Itoua, I., Strand, H. E., Morrison, J. C., Loucks, C. J., Allnutt, T. F., Ricketts, T. H., Kura, Y., Lamoreux, J. F., Wettengel, W. W., Hedao, P., Kassem, K. R. 2001. Terrestrial ecoregions of the world: a new map of life on Earth. Bioscience 51(11):933-938.
-global_biomes <-st_read (here("data", "raw_data", "biomes", "wwf_terr_ecos.shp"))
+global_biomes <- st_read (here("data", "raw_data", "biomes", "wwf_terr_ecos.shp"))
 
 #Load Boreal Forest (BIOME = 6)
 boreal_forest <- st_union(global_biomes[global_biomes$BIOME == 6,])
@@ -75,7 +75,7 @@ try_filtered <- rbind(boreal_try_data, tundra_try_data)
 # Save filtered data to file
 #save(try_filtered, file = here("data", "derived_data", "try_filtered.RData"))
 
-# 3.3 Extract species list -----------------------------------------------------
+## 3.3 Extract species list ----------------------------------------------------
 
 # Extract unique species for each biome
 boreal_species <- unique(boreal_try_data$AccSpeciesName)
@@ -95,6 +95,27 @@ all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundr
                                     rep("Tundra", length(setdiff(tundra_species, boreal_species)))),
                           SharedAcrossBiomes = c(boreal_species %in% common_species, 
                          setdiff(tundra_species, boreal_species) %in% common_species))
+
+## 3.4. Remove morphospecies from list -----------------------------------------
+
+# Filter out morphospecies from list
+filtered_species_list <- all_filtered_species |>
+  filter(!grepl("\\bsp\\.$|\\bsp\\b", SpeciesName) &
+           # remove generic species names
+           !SpeciesName %in% c("Grass", "Fern", "Unknown") &
+           # remove suspect species names
+           !SpeciesName %in% c("Eri sch", "Hieracium sect."))
+
+# Check how many records were removed
+cat("Original species count:", nrow(all_filtered_species), "\n") # 800
+cat("Filtered species count:", nrow(filtered_species_list), "\n") # 770
+cat("Number of morphospecies/generic entries removed:", 
+    nrow(all_filtered_species) - nrow(filtered_species_list), "\n") # 30
+
+# Check which records have been removed
+removed_species <- anti_join(all_filtered_species, filtered_species_list, 
+                             by = "SpeciesName")
+print(removed_species)
 
 # Save species list
 #save(all_filtered_species, file = here("data", "derived_data", "all_filtered_species.RData"))
