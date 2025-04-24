@@ -41,7 +41,7 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 ## File Structure
 
 | Name                | Function                                                                 |
-|-------------------|-----------------------------------------------------|
+|---------------------|--------------------------------------------------------------------------|
 | 0_setup.R           | Load all necessary packages and functions                                |
 | 1.1_TRY_filtering.R | Filter TRY records to only include those in the boreal and tundra biomes |
 
