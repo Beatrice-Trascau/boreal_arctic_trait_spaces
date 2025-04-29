@@ -75,7 +75,9 @@ try_filtered <- rbind(boreal_try_data, tundra_try_data)
 # Save filtered data to file
 #save(try_filtered, file = here("data", "derived_data", "try_filtered.RData"))
 
-## 3.3 Extract species list ----------------------------------------------------
+# 4. CREATE SPECIES LIST -------------------------------------------------------
+
+## 4.1. Extract species list ---------------------------------------------------
 
 # Extract unique species for each biome
 boreal_species <- unique(boreal_try_data$AccSpeciesName)
@@ -96,7 +98,7 @@ all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundr
                           SharedAcrossBiomes = c(boreal_species %in% common_species, 
                          setdiff(tundra_species, boreal_species) %in% common_species))
 
-## 3.4. Remove morphospecies from list -----------------------------------------
+## 4.2. Remove morphospecies from list -----------------------------------------
 
 # Filter out morphospecies from list
 filtered_species_list <- all_filtered_species |>
@@ -117,7 +119,7 @@ removed_species <- anti_join(all_filtered_species, filtered_species_list,
                              by = "SpeciesName")
 print(removed_species)
 
-## 3.5. Standardise subspecies/varieties to species level ----------------------
+## 4.3. Standardise subspecies/varieties to species level ----------------------
 
 # Extract list of subspecies/varieties
 subspecies_varieties <- filtered_species_list |>
@@ -152,13 +154,49 @@ regular_species <- filtered_species_list |>
 # Combine the datasets and remove duplicates
 standardised_species_list <- bind_rows(regular_species,
                                        standardised_subspecies) |>
-  distinct()
+  distinct() |>
+  mutate(BiomeCategory = case_when(
+    SharedAcrossBiomes ~ "Ubiquitous",
+    Biome == "Boreal" ~ "Boreal specialist",
+    Biome == "Tundra" ~ "Arctic specialist"))
 
 # Check the counts
 cat("Original filtered species count:", nrow(filtered_species_list), "\n")
 cat("Number of subspecies/varieties found:", nrow(subspecies_varieties), "\n")
 cat("Number of regular species:", nrow(regular_species), "\n")
 cat("Final standardized species count:", nrow(standardised_species_list), "\n")
+
+## 4.4. Check classification of species ----------------------------------------
+
+# Load Mariana's dataset
+classification <- read.csv(here("data", "raw_data", "species_ab_class_jan2025.csv"))
+
+# Check types of classification
+unique(classification$ClassNew)
+
+# Change boreal-tundra boundary
+classification <- classification |>
+  mutate(ClassNew = ifelse(ClassNew == "Boreal-tundra boundary", "Ubiquitous", ClassNew))
+
+# Ensure species names are in the same formats in both dfs
+comparison_results <- standardised_species_list |>
+  # select only relevant columns
+  select(SpeciesName, BiomeCategory) |>
+  # join with Mariana's df
+  left_join(classification |>
+              select(SpeciesName = SPECIES_CLEAN, CoauthorClassification = ClassNew), 
+            by = "SpeciesName") |>
+  # create a match indicator for species that are in both datasets
+  mutate(FoundInBoth = !is.na(CoauthorClassification),
+         ClassificationMatch = case_when(is.na(CoauthorClassification) ~ NA,
+                                         BiomeCategory == CoauthorClassification ~ TRUE,
+                                         TRUE ~ FALSE))
+
+# Extract list of discrepancies
+discrepancies <- comparison_results |>
+  filter(FoundInBoth & !ClassificationMatch) |>
+  select(SpeciesName, YourClassification = BiomeCategory, CoauthorClassification)
+
 
 
 # Save species list
