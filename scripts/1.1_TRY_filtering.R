@@ -156,7 +156,7 @@ standardised_species_list <- bind_rows(regular_species,
                                        standardised_subspecies) |>
   distinct() |>
   mutate(BiomeCategory = case_when(
-    SharedAcrossBiomes ~ "Ubiquitous",
+    SharedAcrossBiomes ~ "BorealArctic",
     Biome == "Boreal" ~ "Boreal specialist",
     Biome == "Tundra" ~ "Arctic specialist"))
 
@@ -174,9 +174,10 @@ classification <- read.csv(here("data", "raw_data", "species_ab_class_jan2025.cs
 # Check types of classification
 unique(classification$ClassNew)
 
-# Change boreal-tundra boundary
+# Standardise classifications for ease of comparison
 classification <- classification |>
-  mutate(ClassNew = ifelse(ClassNew == "Boreal-tundra boundary", "Ubiquitous", ClassNew))
+  mutate(ClassNew = ifelse(ClassNew %in% c("Boreal-tundra boundary", "Ubiquitous"),
+                           "BorealArctic", ClassNew))
 
 # Ensure species names are in the same formats in both dfs
 comparison_results <- standardised_species_list |>
@@ -184,23 +185,22 @@ comparison_results <- standardised_species_list |>
   select(SpeciesName, BiomeCategory) |>
   # join with Mariana's df
   left_join(classification |>
-              select(SpeciesName = SPECIES_CLEAN, CoauthorClassification = ClassNew), 
+              select(SpeciesName = SPECIES_CLEAN, PaperClassification = ClassNew), 
             by = "SpeciesName") |>
   # create a match indicator for species that are in both datasets
-  mutate(FoundInBoth = !is.na(CoauthorClassification),
-         ClassificationMatch = case_when(is.na(CoauthorClassification) ~ NA,
-                                         BiomeCategory == CoauthorClassification ~ TRUE,
+  mutate(FoundInBoth = !is.na(PaperClassification),
+         ClassificationMatch = case_when(is.na(PaperClassification) ~ NA,
+                                         BiomeCategory == PaperClassification ~ TRUE,
                                          TRUE ~ FALSE))
 
 # Extract list of discrepancies
 discrepancies <- comparison_results |>
   filter(FoundInBoth & !ClassificationMatch) |>
-  select(SpeciesName, YourClassification = BiomeCategory, CoauthorClassification)
-
+  select(SpeciesName, MyClassification = BiomeCategory, PaperClassification)
 
 
 # Save species list
-#save(all_filtered_species, file = here("data", "derived_data", "all_filtered_species.RData"))
+#save(standardised_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
 
 # 4. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
