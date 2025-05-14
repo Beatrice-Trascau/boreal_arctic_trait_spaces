@@ -203,7 +203,41 @@ discrepancies <- comparison_results |>
 # Save species list
 #save(standardised_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
 
-# 4. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
+## 4.4. Taxonomic check --------------------------------------------------------
+
+# Get list of species
+spp <- unique(standardised_species_list$SpeciesName)
+
+# Identify empty species names
+empty <- standardised_species_list |> 
+  filter(SpeciesName == " ") # no empty cells
+
+# Load WFO data
+library(WorldFlora)
+WFO.remember('data/WFO_Backbone/classification.csv')
+
+# Create dataframe with unique species names only
+sp_names_only <- standardised_species_list |>
+  distinct(SpeciesName)
+
+# Run taxon check
+taxon_check <- WFO.match(spec.data = sp_names_only,
+                         spec.name = "SpeciesName",
+                         WFO.file = 'data/WFO_Backbone/classification.csv',
+                         no.dates = TRUE)
+
+# Save taxon check to file
+write.csv(taxon_check, here("data", "derived_data", 
+                            "WFO_taxon_check_May2025.csv"))
+
+# Check records that don't match
+to_fix <- taxon_check |> 
+  mutate(SPECIES_CLEAN = case_when(SpeciesName != scientificName ~ scientificName,
+                                   TRUE ~ SpeciesName)) |>
+  select(SpeciesName, scientificName, family, SPECIES_CLEAN) |>
+  distinct(SpeciesName, .keep_all = TRUE)
+
+# 5. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
 # Get world basemap
 world <- ne_countries(scale = "medium", returnclass = "sf")
