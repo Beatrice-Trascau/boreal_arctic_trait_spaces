@@ -106,7 +106,8 @@ filtered_species_list <- all_filtered_species |>
            # remove generic species names
            !SpeciesName %in% c("Grass", "Fern", "Unknown") &
            # remove suspect species names
-           !SpeciesName %in% c("Eri sch", "Hieracium sect."))
+           !SpeciesName %in% c("Hieracium sect.")) |>
+  mutate(SpeciesName = if_else(SpeciesName == "Eri sch", "Eriophorum scheuchzeri", SpeciesName))
 
 # Check how many records were removed
 cat("Original species count:", nrow(all_filtered_species), "\n") # 800
