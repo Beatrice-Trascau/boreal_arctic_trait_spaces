@@ -213,31 +213,80 @@ empty <- standardised_species_list |>
   filter(SpeciesName == " ") # no empty cells
 
 # Load WFO data
-library(WorldFlora)
-WFO.remember('data/WFO_Backbone/classification.csv')
+# library(WorldFlora)
+# WFO.remember('data/WFO_Backbone/classification.csv')
 
 # Create dataframe with unique species names only
 sp_names_only <- standardised_species_list |>
   distinct(SpeciesName)
 
 # Run taxon check
-taxon_check <- WFO.match(spec.data = sp_names_only,
-                         spec.name = "SpeciesName",
-                         WFO.file = 'data/WFO_Backbone/classification.csv',
-                         no.dates = TRUE)
+# taxon_check <- WFO.match(spec.data = sp_names_only,
+#                          spec.name = "SpeciesName",
+#                          WFO.file = 'data/WFO_Backbone/classification.csv',
+#                          no.dates = TRUE)
 
 # Save taxon check to file
-write.csv(taxon_check, here("data", "derived_data", 
-                            "WFO_taxon_check_May2025.csv"))
+# write.csv(taxon_check, here("data", "derived_data", 
+#                             "WFO_taxon_check_May2025.csv"))
 
+# Load taxon check file
+taxon_check <- read.csv(here("data", "derived_data", 
+                             "WFO_taxon_check_May2025.csv"))
+
+# Check records that were not matched
+taxon_unmatched <- taxon_check |>
+  filter(Matched == FALSE) # 2 misspelled species names
+
+# Fix misspelled names
+taxon_unmatched_fix <- taxon_unmatched |>
+  mutate(SpeciesName = case_when(SpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
+                                 SpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia"))
+ 
 # Check records that don't match
-to_fix <- taxon_check |> 
+to_fix <- taxon_unmatched_fix |> 
   mutate(SPECIES_CLEAN = case_when(SpeciesName != scientificName ~ scientificName,
                                    TRUE ~ SpeciesName)) |>
   select(SpeciesName, scientificName, family, SPECIES_CLEAN) |>
   distinct(SpeciesName, .keep_all = TRUE)
 
-# 5. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
+# 5. CHECK CLASSIFICATION OF SPECIES -------------------------------------------
+
+# Load Mariana's dataset
+classification <- read.csv(here("data", "raw_data", "species_ab_class_jan2025.csv"))
+
+# Check types of classification
+unique(classification$ClassNew)
+
+# Standardise classifications for ease of comparison
+classification <- classification |>
+  mutate(ClassNew = ifelse(ClassNew %in% c("Boreal-tundra boundary", "Ubiquitous"),
+                           "BorealArctic", ClassNew))
+
+# Ensure species names are in the same formats in both dfs
+comparison_results <- standardised_species_list |>
+  # select only relevant columns
+  select(SpeciesName, BiomeCategory) |>
+  # join with Mariana's df
+  left_join(classification |>
+              select(SpeciesName = SPECIES_CLEAN, PaperClassification = ClassNew), 
+            by = "SpeciesName") |>
+  # create a match indicator for species that are in both datasets
+  mutate(FoundInBoth = !is.na(PaperClassification),
+         ClassificationMatch = case_when(is.na(PaperClassification) ~ NA,
+                                         BiomeCategory == PaperClassification ~ TRUE,
+                                         TRUE ~ FALSE))
+
+# Extract list of discrepancies
+discrepancies <- comparison_results |>
+  filter(FoundInBoth & !ClassificationMatch) |>
+  select(SpeciesName, MyClassification = BiomeCategory, PaperClassification)
+
+
+# Save species list
+#save(standardised_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
+
+# 6. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
 # Get world basemap
 world <- ne_countries(scale = "medium", returnclass = "sf")
