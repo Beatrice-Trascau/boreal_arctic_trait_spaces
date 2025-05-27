@@ -275,7 +275,7 @@ classification <- classification |>
                            "BorealArctic", ClassNew))
 
 # Ensure species names are in the same formats in both dfs
-comparison_results <- standardised_species_list |>
+comparison_results <- corrected_species_list |>
   # select only relevant columns
   select(SpeciesName, BiomeCategory) |>
   # join with Mariana's df
