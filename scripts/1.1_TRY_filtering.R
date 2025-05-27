@@ -8,6 +8,8 @@
 # 1. TRY DATA -----------------------------------------------------------------
 
 # Load data
+library(here)
+source(here("scripts", "0_setup.R"))
 load(here("data", "raw_data", "try_beatrice.RData"))
 try_raw <- try.final.control
 
@@ -239,16 +241,25 @@ taxon_unmatched <- taxon_check |>
   filter(Matched == FALSE) # 2 misspelled species names
 
 # Fix misspelled names
-taxon_unmatched_fix <- taxon_unmatched |>
+taxon_unmatched_fix <- taxon_check |>
   mutate(SpeciesName = case_when(SpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
-                                 SpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia"))
+                                 SpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
+                                 .default = SpeciesName))
  
 # Check records that don't match
 to_fix <- taxon_unmatched_fix |> 
   mutate(SPECIES_CLEAN = case_when(SpeciesName != scientificName ~ scientificName,
-                                   TRUE ~ SpeciesName)) |>
+                                   TRUE ~ SpeciesName),
+         names_match = SpeciesName == scientificName) |>
   select(SpeciesName, scientificName, family, SPECIES_CLEAN) |>
   distinct(SpeciesName, .keep_all = TRUE)
+
+# Add corrected names into species list
+corrected_species_list <- standardised_species_list |>
+  left_join(to_fix |> select(SpeciesName, SPECIES_CLEAN),
+            by = "SpeciesName") |>
+  mutate(CheckedSpeciesName = ifelse(!is.na(SPECIES_CLEAN), SPECIES_CLEAN, SpeciesName)) |>
+  select(-SPECIES_CLEAN)
 
 # 5. CHECK CLASSIFICATION OF SPECIES -------------------------------------------
 
