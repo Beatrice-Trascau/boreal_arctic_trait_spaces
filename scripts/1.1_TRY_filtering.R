@@ -261,6 +261,9 @@ corrected_species_list <- standardised_species_list |>
   mutate(CheckedSpeciesName = ifelse(!is.na(SPECIES_CLEAN), SPECIES_CLEAN, SpeciesName)) |>
   select(-SPECIES_CLEAN)
 
+# Save corrected species list
+#save(corrected_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
+
 # 5. CHECK CLASSIFICATION OF SPECIES -------------------------------------------
 
 # Load Mariana's dataset
@@ -292,10 +295,6 @@ comparison_results <- corrected_species_list |>
 discrepancies <- comparison_results |>
   filter(FoundInBoth & !ClassificationMatch) |>
   select(SpeciesName, MyClassification = BiomeCategory, PaperClassification)
-
-
-# Save species list
-#save(standardised_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
 
 # 6. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
