@@ -23,7 +23,8 @@ package_vec <- c("here", "terra", "sf", "geodata", "mapview",
                  "data.table","patchwork", "styler", "scales",
                  "plotly", "tidyterra", "ggspatial", "htmlwidgets",
                  "htmltools", "patchwork", "webshot2", "CoordinateCleaner",
-                 "car", "kableExtra", "readr", "rnaturalearth", "rnaturalearthdata")
+                 "car", "kableExtra", "readr", "rnaturalearth", "rnaturalearthdata",
+                 "rgbif", "purr")
 
 # Execute the function
 sapply(package_vec, install_load_package)
