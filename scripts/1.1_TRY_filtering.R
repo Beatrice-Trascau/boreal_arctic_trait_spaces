@@ -261,6 +261,16 @@ corrected_species_list <- standardised_species_list |>
   mutate(CheckedSpeciesName = ifelse(!is.na(SPECIES_CLEAN), SPECIES_CLEAN, SpeciesName)) |>
   select(-SPECIES_CLEAN)
 
+# Check species names
+unique(corrected_species_list$CheckedSpeciesName) # some name are still problematic
+
+# Remove/fix problematic "species" names
+corrected_species_list <- corrected_species_list |>
+  mutate(CheckedSpeciesName = case_when(CheckedSpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
+                                        CheckedSpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
+                                        .default = CheckedSpeciesName)) |>
+  filter(!CheckedSpeciesName %in% c("Echinops", "Stellaria", "Salix"))
+
 # Save corrected species list
 #save(corrected_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
 
