@@ -66,7 +66,7 @@ for(i in seq_along(species_list)){
     gbif_data <- occ_search(scientificName = species_name,
                             hasCoordinate = TRUE,
                             coordinateUncertaintyInMeters = "0,1000",
-                            limit = 200000)
+                            limit = 30000)
     
     # Check if data was returned
     if(is.null(gbif_data$data) || nrow(gbif_data$data) == 0){
