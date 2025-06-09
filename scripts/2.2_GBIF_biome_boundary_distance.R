@@ -163,13 +163,25 @@ for(i in seq_along(species_list)){
   cat("\n")
 }
 
+# 3. FINAL SUMMARY -------------------------------------------------------------
+
+# Quick summary of successful and failed species
+cat("=== PROCESSING COMPLETE ===\n")
+cat("Total species processed:", n_total_species, "\n")
+cat("Successful species:", length(succesful_species), "\n")
+cat("Failed species:", length(failed_species), "\n")
+
+# Inspect reason for failure in failed species
+if(length(failed_species) > 0) {
+  cat("\nFailed species: ")
+  for(failed in failed_species){
+    cat("  -", failed, "\n")
+  }
+}
+
+# Save results
+save(results_df, file = here("data", "derived_data", 
+                             "species_biome_classification.RData"))
 
 
-
-
-
-
-
-
-
-
+# END OF SCRIPT ----------------------------------------------------------------
