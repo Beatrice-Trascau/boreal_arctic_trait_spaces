@@ -151,8 +151,16 @@ for(i in seq_along(species_list)){
     succesful_species <- c(succesful_species, species_name)
     
     ## 2.6. Clean up temporary data --------------------------------------------
+    rm(gbif_data, occurrence_data, occurrence_points, boreal_points, tundra_points, 
+       boreal_distances, tundra_distances, distances)
+    gc()
     
+  }, error = function(e){
+    cat("  Error processing", species_name, ":", e$message, "\n")
+    failed_species <- c(failed_species, paste(species_name, "(error:", e$message, ")"))
   })
+  
+  cat("\n")
 }
 
 
