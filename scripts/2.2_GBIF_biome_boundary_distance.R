@@ -65,7 +65,8 @@ for(i in seq_along(species_list)){
     # Set up search in GBIF
     gbif_data <- occ_search(scientificName = species_name,
                             hasCoordinate = TRUE,
-                            coordinateUncertaintyInMeters = "0,1000")
+                            coordinateUncertaintyInMeters = "0,1000",
+                            limit = 200000)
     
     # Check if data was returned
     if(is.null(gbif_data$data) || nrow(gbif_data$data) == 0){
@@ -147,7 +148,7 @@ for(i in seq_along(species_list)){
                           stringsAsFactors = FALSE)
     
     # Add to results dataframe
-    results_df <- rbing(results_df, new_row)
+    results_df <- rbind(results_df, new_row)
     succesful_species <- c(succesful_species, species_name)
     
     ## 2.6. Clean up temporary data --------------------------------------------
