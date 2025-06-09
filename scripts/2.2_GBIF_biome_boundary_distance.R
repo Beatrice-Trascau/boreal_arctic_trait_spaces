@@ -98,5 +98,22 @@ for(i in seq_along(species_list)){
     
     ## 2.3. Filter points to those within the biomes ---------------------------
     
+    # Find points within each biome
+    boreal_points <- occurrence_points[lengths(st_within(occurrence_points, boreal_forest)) > 0,]
+    tundra_points <- occurrence_points[lengths(st_within(occurrence_points, tundra)) > 0,]
+    
+    # Display the number of points found
+    cat("  Points in boreal:", nrow(boreal_points), "\n")
+    cat("  Points in tundra:", nrow(tundra_points), "\n")
+    
+    # Check if there are points in at least one biome
+    if(nrow(boreal_points) == 0 && nrow(tundra_points) == 0){
+      cat("  No points found in either biome for", species_name, "\n")
+      failed_species <- c(failed_species, paste(species_name, "(no biome overlap)"))
+      next
+    }
+    
+    ## 2.4. Calculate distance to biome boundaries -----------------------------
+    
   })
 }
