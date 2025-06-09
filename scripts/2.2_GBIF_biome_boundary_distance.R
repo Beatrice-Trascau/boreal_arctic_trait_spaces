@@ -115,5 +115,53 @@ for(i in seq_along(species_list)){
     
     ## 2.4. Calculate distance to biome boundaries -----------------------------
     
+    # Create variable to store distance
+    distances <- numeric()
+    
+    # Boreal points: positive distance to tundra boundary
+    if(nrow(boreal_points) > 0) {
+      boreal_distances <- as.numeric(st_distance(boreal_points, st_boundary(tundra)))
+      distances <- c(distances, boreal_distances)
+    }
+    
+    # Tundra points: negative distance to boreal boundary
+    if(nrow(tundra_points) > 0){
+      tundra_distances <- -as.numeric(st_distance(tundra_points, st_boundary(boreal_forest)))
+      distances <- c(distances, tundra_distances)
+    }
+    
+    ## 2.5. Calculate species-level metrics ------------------------------------
+    
+    # Get average and sample size
+    avg_distance <- mean(distances, na.rm = TRUE)
+    n_records <- length(distances) 
+    
+    # Classify species based on average distance
+    classification <- ifelse(avg_distance > 0, "boreal", "arctic")
+    
+    # Add classification to results dataframe
+    new_row <- data.frame(species_name = species_name,
+                          avg_distance_to_boundary = avg_distance,
+                          classification = classification,
+                          n_records_used = n_records,
+                          stringsAsFactors = FALSE)
+    
+    # Add to results dataframe
+    results_df <- rbing(results_df, new_row)
+    succesful_species <- c(succesful_species, species_name)
+    
+    ## 2.6. Clean up temporary data --------------------------------------------
+    
   })
 }
+
+
+
+
+
+
+
+
+
+
+
