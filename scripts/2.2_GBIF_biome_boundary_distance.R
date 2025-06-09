@@ -7,12 +7,19 @@
 
 # 1. SETUP ---------------------------------------------------------------------
 
+## 1.1. Species data -----------------------------------------------------------
+
 # Load packages and functions
 library(here)
 source(here("scripts", "0_setup.R"))
 
 # Load species list 
 load(here("data", "derived_data", "all_filtered_standardised_species.RData"))
+
+# Extract species list 
+species_list <- unique(corrected_species_list$CheckedSpeciesName)
+
+## 1.2. WWF biomes -------------------------------------------------------------
 
 # Load WWF biomes
 # Citation: Olson, D. M., Dinerstein, E., Wikramanayake, E. D., Burgess, N. D., Powell, G. V. N., Underwood, E. C., D'Amico, J. A., Itoua, I., Strand, H. E., Morrison, J. C., Loucks, C. J., Allnutt, T. F., Ricketts, T. H., Kura, Y., Lamoreux, J. F., Wettengel, W. W., Hedao, P., Kassem, K. R. 2001. Terrestrial ecoregions of the world: a new map of life on Earth. Bioscience 51(11):933-938.
@@ -23,3 +30,53 @@ boreal_forest <- st_union(global_biomes[global_biomes$BIOME == 6,])
 
 # Load Tundra (BIOME = 11)
 tundra <- st_union(global_biomes[global_biomes$BIOME == 11 &(global_biomes$REALM == "PA"|global_biomes$REALM == "NA"), ])
+
+# Make sure boreal_forest and tundra are valid geometries
+boreal_forest <- st_make_valid(boreal_forest)
+tundra <- st_make_valid(tundra)
+
+# Check CRS
+biome_crs <- st_crs(boreal_forest)
+
+## 1.3. Prepare df to store results --------------------------------------------
+
+# Create a dataframe to store results in
+results_df <- data.frame(species_name = character(),
+                         avg_distance_to_boundary = numeric(),
+                         classification = character(),
+                         n_records_used = integer(),
+                         stringsAsFactors = FALSE)
+
+# Create tracking variables
+succesful_species <- character()
+failed_species <- character()
+n_total_species <- length(species_list)
+
+# 2. PROCESS EACH SPECIES ------------------------------------------------------
+
+for(i in seq_along(species_list)){
+  species_name <- species_list[i]
+  cat("Processing species", i, "of", n_total_species, ":", species_name, "\n")
+  
+  tryCatch({
+    ## 2.1. Get occurrence data from GBIF --------------------------------------
+    cat("  Downloading GBIF data...\n")
+    
+    # Set up search in GBIF
+    gbif_data <- occ_search(scientificName = species_name,
+                            hasCoordinate = TRUE,
+                            coordinateUncertaintyInMeters = "0,1000")
+    
+    # Check if data was returned
+    if(is.null(gbif_data$data) || nrow(gbif_data$data) == 0){
+      cat(" No occurrence data foud for", species_name, "\n")
+      failed_species <- c(failed_species, paste(species_name, "(no data)"))
+      next
+    }
+    occurrence_data <- gbif_data$data
+    cat("  Found", nrow(occurrence_data), "occurrence records\n")
+    
+    ## 2.2. Convert occurrences to spatial points ------------------------------
+    
+  })
+}
