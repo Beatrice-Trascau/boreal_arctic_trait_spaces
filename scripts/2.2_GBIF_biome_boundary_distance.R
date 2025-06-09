@@ -78,5 +78,25 @@ for(i in seq_along(species_list)){
     
     ## 2.2. Convert occurrences to spatial points ------------------------------
     
+    # Remove records without coordinates
+    occurrence_data <- occurrence_data[!is.na(occurrence_data$decimalLongitude) &
+                                         !is.na(occurrence_data$decimalLatitude), ]
+    
+    if(nrow(occurrence_data) == 0) {
+      cat("  No valid coordinates found for", species_name, "\n")
+      failed_species <- c(failed_species, paste(species_name, "(no coordinates)"))
+      next
+    }
+    
+    # Create sf points object
+    occurrence_points <- st_as_sf(occurrence_data,
+                                  coords = c("decimalLongitude", "decimalLatitude"),
+                                  crs = 4326) #WGS84
+    
+    # Transform to same CRS as biome polygons
+    occurrence_points <- st_transform(occurrence_points, crs = biome_crs)
+    
+    ## 2.3. Filter points to those within the biomes ---------------------------
+    
   })
 }
