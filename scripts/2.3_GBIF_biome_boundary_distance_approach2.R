@@ -133,8 +133,106 @@ n_total_species <- length(species_list)
 
 # 2. PROCESS EACH SPECIES ------------------------------------------------------
 
+for(i in seq_along(species_list)){
+  species_name <- species_list[i]
+  cat("Processing species", i, "of", n_total_species, ":", species_name, "\n")
+  
+  tryCatch({
+    ## 2.1. Get occurrence counts for each grid cell ---------------------------
+    
+    # Initialise presence vector
+    cell_presence <- rep(0, nrow(grid_final))
+    
+    # Query each cell for occurrences
+    for(j in 1: nrow(grid_final)){
+      cell_count <- occ_count(scientficName = species_name,
+                              hasCoordinate = TRUE,
+                              coordinateUncertaintyInMeters = "0,1000",
+                              decimalLatitude = paste(grid_final$latitude[j] - 0.005, 
+                                                      grid_final$latitude[j] + 0.005, sep = ","),
+                              decimalLongitude = paste(grid_final$longitude[j] - 0.005, 
+                                                       grid_final$longitude[j] + 0.005, sep = ","))
+      
+      # Mark as present if any occurrences are found
+      if(cell_count > 0) {
+        cell_presence[j] <- 1
+      }
+      
+      # Progress indicator for large grids
+      if(j %% 1000 == 0) {
+        cat("    Processed", j, "of", nrow(grid_final), "cells\n")
+      }
+    }
+    
+    # Check if species found in any cells
+    n_occupied_cells <- sum(cell_presence)
+    if(n_occupied_cells == 0) {
+      cat("  No occurrences found for", species_name, "\n")
+      failed_species <- c(failed_species, paste(species_name, "(no occurrences)"))
+      next
+    }
+    
+    ## 2.2. Calculate median distance across occupied cells --------------------
+    
+    # Get distances for occupied cells only
+    occupied_distances <- grid_final$distance_to_boundary[cell_presence == 1]
+    
+    # Remove NA distances
+    occupied_distances <- occupied_distances[!is.na(occupied_distances)]
+    
+    # Check if there are only NA distances
+    if(length(occupied_distances) == 0) {
+      cat("  No valid distances calculated for", species_name, "\n")
+      failed_species <- c(failed_species, paste(species_name, "(no valid distances)"))
+      next
+    }
+    
+    # Calculate median distance
+    median_distance <- median(occupied_distances, na.rm = TRUE)
+    
+    # Classify species
+    classification <- ifelse(median_distance > 0, "boreal", "arctic")
+    
+    # Store results
+    new_row <- data.frame(species_name = species_name,
+                          avg_distance_to_boundary = median_distance,
+                          classification = classification,
+                          n_records_used = length(occupied_distances),
+                          stringsAsFactors = FALSE)
+    
+    # Add to results df
+    results_df <- rbind(results_df, new_row)
+    
+    # Store successful species
+    succesful_species <- c(succesful_species, species_name)
+    
+  }, error = function(e){
+    cat("  Error processing", species_name, ":", e$message, "\n")
+    failed_species <- c(failed_species, paste(species_name, "(error:", e$message, ")"))
+  })
+  
+  cat("\n")
+}
 
+# 3. FINAL SUMMARY -------------------------------------------------------------
 
+# Quick summary of successful and failed species
+cat("=== PROCESSING COMPLETE ===\n")
+cat("Total species processed:", n_total_species, "\n")
+cat("Successful species:", length(succesful_species), "\n")
+cat("Failed species:", length(failed_species), "\n")
 
+# Inspect reason for failure in failed species
+if(length(failed_species) > 0) {
+  cat("\nFailed species: ")
+  for(failed in failed_species){
+    cat("  -", failed, "\n")
+  }
+}
 
+# Save results
+save(results_df, file = here("data", "derived_data", 
+                             "species_biome_classification_approach2.RData"))
+
+# END OF SCRIPT ----------------------------------------------------------------
 
