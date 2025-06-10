@@ -63,6 +63,60 @@ grid_sf <- st_as_sf(grid_polygons)
 # Add cell ID
 grid_sf$cell_id <- 1:nrow(grid_sf)
 
+## 1.4. Filter grid to biome areas and calculate distances ---------------------
+
+# Keep only cells that intersect with either biome
+grid_intersects <- st_intersects(grid_sf, combined_biomes)
+grid_in_biomes <- grid_sf[lengths(grid_intersects) > 0, ]
+
+# Check how many cells there are within biomes
+cat("Grid cells within biomes:", nrow(grid_in_biomes), "\n")
+
+# Get centroids for the biome boundary distance calculations
+grid_centroids <- st_centroid(grid_in_biomes)
+
+# Determine which biome each cell belongs to
+boreal_cells <- st_intersects(grid_centroids, boreal_forest)
+tundra_cells <- st_intersects(grid_centroids, tundra)
+
+# Create biome classification for each cell
+grid_in_biomes$biome <- "mixed" # default
+grid_in_biomes$biome[lengths(boreal_cells) > 0 & lengths(tundra_cells) == 0] <- "boreal"
+grid_in_biomes$biome[lengths(tundra_cells) > 0 & lengths(boreal_cells) == 0] <- "tundra"
+
+# Calculate distances to biome boundaries
+grid_in_biomes$distance_to_boundary <- NA
+
+# Boreal cells: +ve distance to biome boundary
+boreal_mask <- grid_in_biomes$biome == "boreal"
+if(sum(boreal_mask) > 0){
+  boreal_centroids <- st_centroid(grid_in_biomes[boreal_mask, ])
+  boreal_distances <- as.numeric(st_distance(boreal_centroids, st_boundary(tundra)))
+  grid_in_biomes$distance_to_boundary[boreal_mask] <- boreal_distances
+}
+
+# Tundra cells: -ve distance to boreal boundary
+tundra_mask <- grid_in_biomes$biome == "tundra"
+if(sum(tundra_mask) > 0){
+  tundra_centroids <- st_centroid(grid_in_biomes[tundra_mask, ])
+  tundra_distances <- as.numeric(st_distance(tundra_centroids, st_boundary(boreal_forest)))
+  grid_in_biomes$distance_to_boundary[tundra_mask] <- -tundra_distances
+}
+
+# Remove mixed cells
+grid_final <- grid_in_biomes[grid_in_biomes$biome %in% c("boteal", "tundra"), ]
+
+# Quick summary of cells
+cat("Final grid cells after removing mixed cells:", nrow(grid_final), "\n")
+cat("Boreal cells:", sum(grid_final$biome == "boreal"), "\n")
+cat("Tundra cells:", sum(grid_final$biome == "tundra"), "\n")
+
+# Convert to lat/lon for GBIF queries
+grid_wgs84 <- st_transform(grid_final, crs = 4326)
+grid_coords <- st_coordinates(st_centroid(grid_wgs84))
+grid_final$longitude <- grid_coords[, "X"]
+grid_final$latitude  <- grid_coords[, "Y"]
+
 
 
 
