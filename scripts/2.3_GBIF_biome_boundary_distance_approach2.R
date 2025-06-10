@@ -53,7 +53,7 @@ grid_resoluton <- 1000
 # Create raster template
 grid_raster <- rast(xmin = bbox["xmin"], xmax = bbox["xmax"],
                     ymin = bbox["ymin"], ymax = bbox["ymax"],
-                    resolution = grid_resolution,
+                    resolution = grid_resoluton,
                     crs = st_crs(combined_biomes)$wkt)
 
 # Convert to polygons and then to sf
@@ -104,7 +104,7 @@ if(sum(tundra_mask) > 0){
 }
 
 # Remove mixed cells
-grid_final <- grid_in_biomes[grid_in_biomes$biome %in% c("boteal", "tundra"), ]
+grid_final <- grid_in_biomes[grid_in_biomes$biome %in% c("boreal", "tundra"), ]
 
 # Quick summary of cells
 cat("Final grid cells after removing mixed cells:", nrow(grid_final), "\n")
@@ -113,7 +113,16 @@ cat("Tundra cells:", sum(grid_final$biome == "tundra"), "\n")
 
 # Convert to lat/lon for GBIF queries
 grid_wgs84 <- st_transform(grid_final, crs = 4326)
-grid_coords <- st_coordinates(st_centroid(grid_wgs84))
+grid_centroids_wgs84 <- st_centroid(grid_wgs84)
+grid_coords <- st_coordinates(grid_centroids_wgs84)
+
+# Handle case where coordinates don't have column names
+if(is.null(colnames(grid_coords))) {
+  # Assume standard longitude (X) and latitude (Y)
+  colnames(grid_coords) <- c("X", "Y")
+}
+
+# Extract lat & long for final grid
 grid_final$longitude <- grid_coords[, "X"]
 grid_final$latitude  <- grid_coords[, "Y"]
 
@@ -145,7 +154,7 @@ for(i in seq_along(species_list)){
     
     # Query each cell for occurrences
     for(j in 1: nrow(grid_final)){
-      cell_count <- occ_count(scientficName = species_name,
+      cell_count <- occ_count(scientificName = species_name,
                               hasCoordinate = TRUE,
                               coordinateUncertaintyInMeters = "0,1000",
                               decimalLatitude = paste(grid_final$latitude[j] - 0.005, 
