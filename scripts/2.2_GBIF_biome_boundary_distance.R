@@ -76,7 +76,7 @@ for(i in seq_along(species_list)){
     gbif_data <- occ_search(scientificName = species_name,
                             hasCoordinate = TRUE,
                             coordinateUncertaintyInMeters = "0,1000",
-                            geometry = northern_region_wkt
+                            geometry = northern_region_wkt,
                             limit = 200000)
     
     # Check if data was returned
