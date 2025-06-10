@@ -154,6 +154,18 @@ for(i in seq_along(species_list)){
     
     # Query each cell for occurrences
     for(j in 1: nrow(grid_final)){
+      
+      # Ensure coordinates are correctly formatted as numbers
+      lat_center <- as.numeric(grid_final$latitude[j])
+      lon_center <- as.numeric(grid_final$longitude[j])
+      
+      # Create coordinate bounds with proper formatting
+      lat_min <- round(lat_center - 0.005, 6)
+      lat_max <- round(lat_center + 0.005, 6)
+      lon_min <- round(lon_center - 0.005, 6)
+      lon_max <- round(lon_center + 0.005, 6)
+      
+      # Count occurrences
       cell_count <- occ_count(scientificName = species_name,
                               hasCoordinate = TRUE,
                               coordinateUncertaintyInMeters = "0,1000",
