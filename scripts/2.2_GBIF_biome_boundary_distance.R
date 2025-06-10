@@ -38,7 +38,17 @@ tundra <- st_make_valid(tundra)
 # Check CRS
 biome_crs <- st_crs(boreal_forest)
 
-## 1.3. Prepare df to store results --------------------------------------------
+## 1.3. Create geographic filter for GBIF search -------------------------------
+
+# Get the souther boundary (minimum latitude) of boreal forest
+boreal_bbox <- st_bbox(st_transform(boreal_forest, crs = 4326))
+min_latitude <- boreal_bbox["ymin"]
+
+# Create simple boundy box WKT that covers northern regions (from boreal souther boundary to 90°N across all longitudes)
+northern_region_wkt <- sprintf("POLYGON((-180 %.6f, 180 %.6f, 180 90, -180 90, -180 %.6f))", 
+                               min_latitude, min_latitude, min_latitude)
+
+## 1.4. Prepare df to store results --------------------------------------------
 
 # Create a dataframe to store results in
 results_df <- data.frame(species_name = character(),
@@ -66,7 +76,8 @@ for(i in seq_along(species_list)){
     gbif_data <- occ_search(scientificName = species_name,
                             hasCoordinate = TRUE,
                             coordinateUncertaintyInMeters = "0,1000",
-                            limit = 30000)
+                            geometry = northern_region_wkt
+                            limit = 200000)
     
     # Check if data was returned
     if(is.null(gbif_data$data) || nrow(gbif_data$data) == 0){
