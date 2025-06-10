@@ -117,7 +117,21 @@ grid_coords <- st_coordinates(st_centroid(grid_wgs84))
 grid_final$longitude <- grid_coords[, "X"]
 grid_final$latitude  <- grid_coords[, "Y"]
 
+## 1.5. Prepare df to store results --------------------------------------------
 
+# Create a dataframe to store results in
+results_df <- data.frame(species_name = character(),
+                         avg_distance_to_boundary = numeric(),
+                         classification = character(),
+                         n_records_used = integer(),
+                         stringsAsFactors = FALSE)
+
+# Create tracking variables
+succesful_species <- character()
+failed_species <- character()
+n_total_species <- length(species_list)
+
+# 2. PROCESS EACH SPECIES ------------------------------------------------------
 
 
 
