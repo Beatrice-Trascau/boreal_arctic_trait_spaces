@@ -48,7 +48,7 @@ bbox <- st_bbox(combined_biomes)
 
 # Create grid with 1km resolution
 # Note: grid resolution depends on CRS units. Assuming meters for projected CRS
-grid_resoluton <- 1000
+grid_resoluton <- 10000
 
 # Create raster template
 grid_raster <- rast(xmin = bbox["xmin"], xmax = bbox["xmax"],
@@ -159,20 +159,25 @@ for(i in seq_along(species_list)){
       lat_center <- as.numeric(grid_final$latitude[j])
       lon_center <- as.numeric(grid_final$longitude[j])
       
-      # Create coordinate bounds with proper formatting
-      lat_min <- round(lat_center - 0.005, 6)
-      lat_max <- round(lat_center + 0.005, 6)
-      lon_min <- round(lon_center - 0.005, 6)
-      lon_max <- round(lon_center + 0.005, 6)
+      # Create coordinate bounds 
+      lat_min <- lat_center - 0.005
+      lat_max <- lat_center + 0.005
+      lon_min <- lon_center - 0.005
+      lon_max <- lon_center + 0.005
+      
+      # Create proper WKT polygon format for the bounding box
+      wkt_polygon <- paste0("POLYGON((", 
+                            lon_min, " ", lat_min, ",",
+                            lon_max, " ", lat_min, ",", 
+                            lon_max, " ", lat_max, ",",
+                            lon_min, " ", lat_max, ",",
+                            lon_min, " ", lat_min, "))")
       
       # Count occurrences
       cell_count <- occ_count(scientificName = species_name,
                               hasCoordinate = TRUE,
                               coordinateUncertaintyInMeters = "0,1000",
-                              decimalLatitude = paste(grid_final$latitude[j] - 0.005, 
-                                                      grid_final$latitude[j] + 0.005, sep = ","),
-                              decimalLongitude = paste(grid_final$longitude[j] - 0.005, 
-                                                       grid_final$longitude[j] + 0.005, sep = ","))
+                              geometry = wkt_polygon)
       
       # Mark as present if any occurrences are found
       if(cell_count > 0) {
