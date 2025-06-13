@@ -509,7 +509,7 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
       
       # Save citation progress
       if(length(all_download_metadata) > 0) {
-        save_gbif_citations(all_download_metadata, "gbif_citations_progress.txt")
+        save_gbif_citations(all_download_metadata, here("data", "derived_data", "gbif_citations_progress.txt"))
       }
       
       # Be nice to GBIF between chunks
