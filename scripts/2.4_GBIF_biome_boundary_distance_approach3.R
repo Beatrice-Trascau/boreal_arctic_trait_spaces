@@ -367,5 +367,237 @@ calculate_species_summaries <- function(results_df){
   return(as.data.frame(species_summaries))
 }
 
+## 2.4. Function to manage GBIF citations --------------------------------------
 
+save_gbif_citations <- function(download_metadata_list, filename = "gbif_download_citations.txt"){
+ 
+  # Check if there is any metadata to save
+  if(length(download_metadata_list) == 0) {
+    cat("No download metadata to save\n")
+    return()
+  }
+  
+  ### 2.4.1. Create fiel to store citations ------------------------------------
+  citation_lines <- c("GBIF Download Citations",
+                      "=" %>% rep(50) %>% paste(collapse = ""),
+                      paste("Generated on:", Sys.time()),"",
+                      "Individual Downloads:",
+                      "-" %>% rep(30) %>% paste(collapse = ""),"")
+  
+  # Add metadata
+  for(i in 1:length(download_metadata_list)) {
+    metadata <- download_metadata_list[[i]]
+    if(!is.null(metadata)) {
+      citation_lines <- c(citation_lines,
+                          paste("Chunk", metadata$chunk_number, ":"),
+                          paste("  Download Key:", metadata$download_key),
+                          paste("  DOI:", metadata$doi),
+                          paste("  Download Link:", metadata$download_link),
+                          paste("  Total Records:", metadata$total_records),
+                          paste("  Species (", length(metadata$species_in_chunk), "):", paste(metadata$species_in_chunk, collapse = ", ")),
+                          paste("  Created:", metadata$created),
+                          paste("  Citation:", metadata$citation),
+                          ""
+      )
+    }
+  }
+  
+  ### 2.4.2. Add combined citation ---------------------------------------------
+  
+  ll_dois <- sapply(download_metadata_list, function(x) if(!is.null(x)) x$doi else NULL)
+  all_dois <- all_dois[!sapply(all_dois, is.null)]
+  
+  if(length(all_dois) > 0) {
+    citation_lines <- c(citation_lines,
+                        "",
+                        "Combined Citation:",
+                        "-" %>% rep(30) %>% paste(collapse = ""),
+                        "",
+                        "GBIF.org (", format(Sys.Date(), "%Y"), ") GBIF Occurrence Downloads: ",
+                        paste(all_dois, collapse = "; "),
+                        " accessed via GBIF.org on ", format(Sys.Date(), "%d %B %Y"), ".",
+                        "",
+                        "BibTeX format:",
+                        "@misc{gbif_downloads,",
+                        "  author = {GBIF.org},",
+                        paste0("  title = {GBIF Occurrence Downloads},"),
+                        paste0("  year = {", format(Sys.Date(), "%Y"), "},"),
+                        paste0("  note = {", paste(all_dois, collapse = "; "), "},"),
+                        paste0("  url = {https://www.gbif.org},"),
+                        paste0("  urldate = {", format(Sys.Date(), "%Y-%m-%d"), "}"),
+                        "}"
+    )
+  }
+  
+  ### 2.4.3. Write files -------------------------------------------------------
+  
+  # Write to file
+  writeLines(citation_lines, filename)
+  cat("Citations saved to:", filename, "\n")
+  
+  # Also save as RDS for programmatic access
+  saveRDS(download_metadata_list, gsub("\\.txt$", ".rds", filename))
+  cat("Metadata saved to:", gsub("\\.txt$", ".rds", filename), "\n")
+}
 
+# 3. MAIN ANALYSIS FUNCTIONS ---------------------------------------------------
+
+## 3.1. Main function to process all species -----------------------------------
+
+analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
+  
+  # Add some way to track things
+  cat("=== Starting Analysis of", length(species_list), "Species ===\n")
+  cat("Chunk size:", chunk_size, "\n")
+  cat("Starting from chunk:", start_chunk, "\n")
+  
+  ### 3.1.1. Setup biomes and grid ---------------------------------------------
+  cat("Setting up biomes and grid...\n")
+  global_biomes <- st_read(here("data", "raw_data", "biomes", "wwf_terr_ecos.shp"))
+  boreal_forest <- st_union(global_biomes[global_biomes$BIOME == 6,])
+  tundra <- st_union(global_biomes[global_biomes$BIOME == 11 & 
+                                     (global_biomes$REALM == "PA" | global_biomes$REALM == "NA"), ])
+  boreal_forest <- st_make_valid(boreal_forest)
+  tundra <- st_make_valid(tundra)
+  boreal_forest <- st_transform(boreal_forest, "EPSG:4326")
+  tundra <- st_transform(tundra, "EPSG:4326")
+  
+  # Create grid
+  combined_biomes <- st_union(boreal_forest, tundra)
+  combined_extent <- st_bbox(combined_biomes)
+  
+  grid <- rast(extent = combined_extent, 
+               resolution = c(0.45, 0.45),
+               crs = "EPSG:4326")
+  
+  polygrid <- as.polygons(grid)
+  polygrid$cell_id <- 1:nrow(polygrid)
+  polygrid_sf <- st_as_sf(polygrid)
+  
+  # Filter to cells within biomes
+  cells_in_boreal <- st_intersects(polygrid_sf, boreal_forest, sparse = FALSE)[,1]
+  cells_in_tundra <- st_intersects(polygrid_sf, tundra, sparse = FALSE)[,1]
+  cells_in_biomes <- cells_in_boreal | cells_in_tundra
+  
+  polygrid_filtered <- polygrid_sf[cells_in_biomes, ]
+  polygrid_filtered$in_boreal <- cells_in_boreal[cells_in_biomes]
+  polygrid_filtered$in_tundra <- cells_in_tundra[cells_in_biomes]
+  
+  cat("Grid setup complete. Total cells:", nrow(polygrid_filtered), "\n")
+  
+  ### 3.1.2. Process species in chunks -----------------------------------------
+  
+  # Split species into chunks
+  species_chunks <- split(species_list, ceiling(seq_along(species_list)/chunk_size))
+  total_chunks <- length(species_chunks)
+  
+  # Initialize results storage
+  all_results <- list()
+  all_download_metadata <- list()
+  
+  # Process chunks starting from start_chunk
+  for(chunk_i in start_chunk:total_chunks) {
+    cat("\n" , rep("=", 50), "\n")
+    cat("CHUNK", chunk_i, "of", total_chunks, "\n")
+    cat(rep("=", 50), "\n")
+    
+    current_species <- species_chunks[[chunk_i]]
+    
+    tryCatch({
+      chunk_output <- process_species_chunk_with_distances(
+        current_species, 
+        polygrid_filtered, 
+        boreal_forest, 
+        tundra,
+        chunk_i
+      )
+      
+      # Extract results and metadata
+      chunk_results <- chunk_output$results
+      chunk_metadata <- chunk_output$download_metadata
+      
+      if(nrow(chunk_results) > 0) {
+        all_results[[chunk_i]] <- chunk_results
+        cat("✓ Chunk", chunk_i, "completed:", nrow(chunk_results), "results\n")
+        
+        # Save intermediate results
+        saveRDS(chunk_results, paste0("chunk_", chunk_i, "_results.rds"))
+      } else {
+        cat("✗ Chunk", chunk_i, "produced no results\n")
+      }
+      
+      # Store metadata regardless of results
+      if(!is.null(chunk_metadata)) {
+        all_download_metadata[[chunk_i]] <- chunk_metadata
+        saveRDS(chunk_metadata, paste0("chunk_", chunk_i, "_metadata.rds"))
+      }
+      
+      # Save progress
+      if(length(all_results) > 0) {
+        combined_results <- do.call(rbind, all_results)
+        saveRDS(combined_results, "species_analysis_progress.rds")
+        cat("Progress saved. Total results so far:", nrow(combined_results), "\n")
+      }
+      
+      # Save citation progress
+      if(length(all_download_metadata) > 0) {
+        save_gbif_citations(all_download_metadata, "gbif_citations_progress.txt")
+      }
+      
+      # Be nice to GBIF between chunks
+      if(chunk_i < total_chunks) {
+        cat("Waiting 2 minutes before next chunk...\n")
+        Sys.sleep(120)
+      }
+      
+    }, error = function(e) {
+      cat("ERROR in chunk", chunk_i, ":", e$message, "\n")
+      cat("Continuing to next chunk...\n")
+    })
+  }
+  
+  ### 3.1.3. Combine results and create final outputs --------------------------
+  if(length(all_results) > 0) {
+    final_results <- do.call(rbind, all_results)
+    
+    # Calculate species summaries
+    species_summaries <- calculate_species_summaries(final_results)
+    
+    # Save final results
+    saveRDS(final_results, "species_analysis_final_results.rds")
+    write.csv(final_results, "species_analysis_final_results.csv", row.names = FALSE)
+    
+    # Save species summaries
+    saveRDS(species_summaries, "species_summaries.rds")
+    write.csv(species_summaries, "species_summaries.csv", row.names = FALSE)
+    
+    # Save final citations
+    save_gbif_citations(all_download_metadata, "gbif_download_citations_final.txt")
+    
+    cat("\n=== ANALYSIS COMPLETE ===\n")
+    cat("Total cell-species results:", nrow(final_results), "\n")
+    cat("Species analyzed:", length(unique(final_results$species)), "\n")
+    cat("Files saved:\n")
+    cat("  - species_analysis_final_results.rds/.csv (all cell-level data)\n")
+    cat("  - species_summaries.rds/.csv (species-level statistics)\n")
+    cat("  - gbif_download_citations_final.txt (citation information)\n")
+    
+    # Summary statistics
+    cat("\nOverall Summary:\n")
+    cat("Boreal cells:", sum(final_results$biome == "boreal"), "\n")
+    cat("Tundra cells:", sum(final_results$biome == "tundra"), "\n")
+    cat("Distance range (km):", range(final_results$distance_to_boundary_km, na.rm = TRUE), "\n")
+    cat("GBIF downloads used:", length(all_download_metadata), "\n")
+    
+    return(list(
+      results = final_results,
+      species_summaries = species_summaries,
+      download_metadata = all_download_metadata
+    ))
+  } else {
+    cat("No results produced\n")
+    return(list(results = data.frame(), species_summaries = data.frame(), download_metadata = list()))
+  }
+}
+
+# END OF SCRIPT ----------------------------------------------------------------
