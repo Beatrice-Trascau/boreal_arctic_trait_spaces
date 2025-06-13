@@ -489,7 +489,7 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
         cat("✓ Chunk", chunk_i, "completed:", nrow(chunk_results), "results\n")
         
         # Save intermediate results
-        saveRDS(chunk_results, paste0("chunk_", chunk_i, "_results.rds"))
+        saveRDS(chunk_results, here("data", "derived_data", paste0("chunk_", chunk_i, "_results.rds")))
       } else {
         cat("✗ Chunk", chunk_i, "produced no results\n")
       }
@@ -497,13 +497,13 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
       # Store metadata regardless of results
       if(!is.null(chunk_metadata)) {
         all_download_metadata[[chunk_i]] <- chunk_metadata
-        saveRDS(chunk_metadata, paste0("chunk_", chunk_i, "_metadata.rds"))
+        saveRDS(chunk_metadata, here("data", "derived_data", paste0("chunk_", chunk_i, "_metadata.rds")))
       }
       
       # Save progress
       if(length(all_results) > 0) {
         combined_results <- do.call(rbind, all_results)
-        saveRDS(combined_results, "species_analysis_progress.rds")
+        saveRDS(combined_results, here("data", "derived_data", "species_analysis_progress.rds"))
         cat("Progress saved. Total results so far:", nrow(combined_results), "\n")
       }
       
@@ -532,15 +532,22 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
     species_summaries <- calculate_species_summaries(final_results)
     
     # Save final results
-    saveRDS(final_results, "species_analysis_final_results.rds")
-    write.csv(final_results, "species_analysis_final_results.csv", row.names = FALSE)
+    saveRDS(final_results, here("data", "derived_data", 
+                                "dist_to_biome_boundary_June25.rds"))
+    write.csv(final_results, here("data", "derived_data", 
+                                  "dist_to_biome_boundary_June25.csv"), 
+              row.names = FALSE)
     
     # Save species summaries
-    saveRDS(species_summaries, "species_summaries.rds")
-    write.csv(species_summaries, "species_summaries.csv", row.names = FALSE)
+    saveRDS(species_summaries, here("data", "derived_data", 
+                                    "species_summaries_dist_to_biome_boundary_June25.rds"))
+    write.csv(species_summaries, here("data", "derived_data", 
+                                      "species_summaries_dist_to_biome_boundary_June25.csv"), 
+              row.names = FALSE)
     
     # Save final citations
-    save_gbif_citations(all_download_metadata, "gbif_download_citations_final.txt")
+    save_gbif_citations(all_download_metadata, here("data", "derived_data", 
+                                                    "biome_boundary_gbif_download_citations_final_June25.txt"))
     
     cat("\n=== ANALYSIS COMPLETE ===\n")
     cat("Total cell-species results:", nrow(final_results), "\n")
