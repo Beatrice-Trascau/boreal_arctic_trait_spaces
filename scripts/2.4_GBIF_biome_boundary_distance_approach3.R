@@ -49,5 +49,56 @@ tundra <- st_make_valid(tundra)
 boreal_forest <- st_transform(boreal_forest, "EPSG:4326")
 tundra <- st_transform(tundra, "EPSG:4326")
 
+## 1.4. Create analysis grid ---------------------------------------------------
 
-# 2. PROCESS LOOP --------------------------------------------------------------
+# Combine biomes to use for the grid extent
+combined_biomes <- st_union(boreal_forest, tundra)
+
+# Create bounding box from the combined biomes
+combined_extent <- st_bbox(combined_biomes)
+
+# Create grid with 0.45 degrees resolution (~50km at high latitudes)
+grid <- rast(extent = combined_extent, 
+             resolution = c(0.45, 0.45),
+             crs = "EPSG:4326")
+
+# Convert to polygons
+polygrid <- as.polygons(grid)
+
+# Give each cell and ID
+polygrid$cell_id <- 1:nrow(polygrid)
+
+# Convert to sf object
+polygrid_sf <- st_as_sf(polygrid)
+
+# Filter cells within boreal biome
+cells_in_boreal <- st_intersects(polygrid_sf, boreal_forest, sparse = FALSE)[,1]
+
+# Filter cells within tundra biome
+cells_in_tundra <- st_intersects(polygrid_sf, tundra, sparse = FALSE)[,1]
+
+# Get cells in both biomes
+cells_in_biomes <- cells_in_boreal | cells_in_tundra
+
+# Keep only cells within biome
+polygrid_filtered <- polygrid_sf[cells_in_biomes, ]
+
+# Get boreal cells
+polygrid_filtered$in_boreal <- cells_in_boreal[cells_in_biomes]
+
+# Get tundra cells
+polygrid_filtered$in_tundra <- cells_in_tundra[cells_in_biomes]
+
+# Summary
+cat("Grid created:", nrow(polygrid_filtered), "cells within biomes\n")
+cat("  Boreal cells:", sum(polygrid_filtered$in_boreal), "\n")
+cat("  Tundra cells:", sum(polygrid_filtered$in_tundra), "\n")
+
+
+
+
+
+
+
+
+
