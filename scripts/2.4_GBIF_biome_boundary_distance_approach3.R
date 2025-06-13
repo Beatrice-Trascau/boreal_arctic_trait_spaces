@@ -146,7 +146,7 @@ process_species_chunk_with_distances <- function(species_list, grid_polygons, bo
                                  pred("geometry", study_area_wkt),
                                  pred("hasCoordinate", TRUE),
                                  pred("hasGeospatialIssue", FALSE),
-                                 pred_lte("coordinateUncertaintyInMeters", 50000)
+                                 pred_lte("coordinateUncertaintyInMeters", 50000),
                                  format = "SIMPLE_CSV")
     
     # Wait for download
@@ -311,10 +311,8 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
                          by = "cell_id")
   
   # Add biome classification
-  final_results <- merge(counts_filtered, 
-                         distance_lookup[, c("cell_id", "distance_to_boundary", 
-                                             "distance_to_boundary_km")], 
-                         by = "cell_id")
+  final_results$biome <- ifelse(final_results$in_boreal, "boreal", 
+                                ifelse(final_results$in_tundra, "tundra", "other"))
   
   # Check how many distance caluclations were completed
   cat("  Completed distance calculations for", nrow(final_results), "records\n")
@@ -404,7 +402,7 @@ save_gbif_citations <- function(download_metadata_list, filename = "gbif_downloa
   
   ### 2.4.2. Add combined citation ---------------------------------------------
   
-  ll_dois <- sapply(download_metadata_list, function(x) if(!is.null(x)) x$doi else NULL)
+  all_dois <- sapply(download_metadata_list, function(x) if(!is.null(x)) x$doi else NULL)
   all_dois <- all_dois[!sapply(all_dois, is.null)]
   
   if(length(all_dois) > 0) {
@@ -451,39 +449,9 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
   cat("Chunk size:", chunk_size, "\n")
   cat("Starting from chunk:", start_chunk, "\n")
   
-  ### 3.1.1. Setup biomes and grid ---------------------------------------------
-  cat("Setting up biomes and grid...\n")
-  global_biomes <- st_read(here("data", "raw_data", "biomes", "wwf_terr_ecos.shp"))
-  boreal_forest <- st_union(global_biomes[global_biomes$BIOME == 6,])
-  tundra <- st_union(global_biomes[global_biomes$BIOME == 11 & 
-                                     (global_biomes$REALM == "PA" | global_biomes$REALM == "NA"), ])
-  boreal_forest <- st_make_valid(boreal_forest)
-  tundra <- st_make_valid(tundra)
-  boreal_forest <- st_transform(boreal_forest, "EPSG:4326")
-  tundra <- st_transform(tundra, "EPSG:4326")
-  
-  # Create grid
-  combined_biomes <- st_union(boreal_forest, tundra)
-  combined_extent <- st_bbox(combined_biomes)
-  
-  grid <- rast(extent = combined_extent, 
-               resolution = c(0.45, 0.45),
-               crs = "EPSG:4326")
-  
-  polygrid <- as.polygons(grid)
-  polygrid$cell_id <- 1:nrow(polygrid)
-  polygrid_sf <- st_as_sf(polygrid)
-  
-  # Filter to cells within biomes
-  cells_in_boreal <- st_intersects(polygrid_sf, boreal_forest, sparse = FALSE)[,1]
-  cells_in_tundra <- st_intersects(polygrid_sf, tundra, sparse = FALSE)[,1]
-  cells_in_biomes <- cells_in_boreal | cells_in_tundra
-  
-  polygrid_filtered <- polygrid_sf[cells_in_biomes, ]
-  polygrid_filtered$in_boreal <- cells_in_boreal[cells_in_biomes]
-  polygrid_filtered$in_tundra <- cells_in_tundra[cells_in_biomes]
-  
-  cat("Grid setup complete. Total cells:", nrow(polygrid_filtered), "\n")
+  ### 3.1.1. Use the biomes and grid created before ----------------------------
+  cat("Using pre-loaded biomes and grid...\n")
+  cat("Grid cells available:", nrow(polygrid_filtered), "\n")
   
   ### 3.1.2. Process species in chunks -----------------------------------------
   
