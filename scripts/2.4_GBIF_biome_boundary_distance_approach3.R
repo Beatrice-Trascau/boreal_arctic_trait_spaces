@@ -575,4 +575,15 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
   }
 }
 
+# 4. RUN ANALYSIS --------------------------------------------------------------
+
+cat("Script loaded successfully. Starting analysis...\n")
+
+
+# Test with a small subset first 
+test_results <- analyze_species_list(species_list[1:10], chunk_size = 2, start_chunk = 1)
+
+# Run full analysis
+results <- analyze_species_list(species_list, chunk_size = 5, start_chunk = 1)
+
 # END OF SCRIPT ----------------------------------------------------------------
