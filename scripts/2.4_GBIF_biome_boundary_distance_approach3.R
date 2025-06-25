@@ -12,6 +12,7 @@
 # Load packages and functions
 library(here)
 source(here("scripts", "0_setup.R"))
+source(here("scripts", "0_GBIF_creds.R"))
 
 ## 1.2. GBIF credentials -------------------------------------------------------
 
@@ -202,10 +203,18 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
   
   ### 2.2.1. Extract and read occurrence data ----------------------------------
   
+  # Create UNIQUE temp directory for each download
+  temp_dir <- file.path(tempdir(), paste0("gbif_", basename(zip_file), "_", Sys.time() |> as.numeric()))
+  dir.create(temp_dir, recursive = TRUE)
+  
   # Extract and read CSV
-  temp_dir <- tempdir()
   unzip(zip_file, exdir = temp_dir, overwrite = TRUE)
   csv_files <- list.files(temp_dir, pattern = "\\.csv$", full.names = TRUE)
+  
+  # DEBUG: Show what we're actually reading
+  cat("  DEBUG: Temp dir:", temp_dir, "\n")
+  cat("  DEBUG: CSV files found:", length(csv_files), "\n")
+  cat("  DEBUG: Reading file:", basename(csv_files[1]), "\n")
   
   if(length(csv_files) == 0) {
     return(data.frame())
@@ -222,9 +231,8 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
   cat("  Read", nrow(occ_data), "occurrence records\n")
   cat("  Species:", paste(unique(occ_data$species), collapse = ", "), "\n")
   
-  if(nrow(occ_data) == 0) {
-    return(data.frame())
-  }
+  # Clean up the unique temp directory
+  unlink(temp_dir, recursive = TRUE)
   
   # Remove records with missing coordinates
   occ_data <- occ_data[!is.na(decimalLongitude) & !is.na(decimalLatitude)]
@@ -477,8 +485,7 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
         polygrid_filtered, 
         boreal_forest, 
         tundra,
-        chunk_i
-      )
+        chunk_i)
       
       # Extract results and metadata
       chunk_results <- chunk_output$results
@@ -579,9 +586,8 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
 
 cat("Script loaded successfully. Starting analysis...\n")
 
-
 # Test with a small subset first 
-test_results <- analyze_species_list(species_list[1:10], chunk_size = 2, start_chunk = 1)
+#test_results <- analyze_species_list(species_list[1:10], chunk_size = 2, start_chunk = 1)
 
 # Run full analysis
 results <- analyze_species_list(species_list, chunk_size = 5, start_chunk = 1)
