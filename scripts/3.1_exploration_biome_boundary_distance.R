@@ -7,9 +7,9 @@
 
 # 1. LOAD DATA -----------------------------------------------------------------
 
-species_distances <- readRDS(here("data", "derived_data",
-                                  "species_summaries_dist_to_biome_boundary_June25.rds"))
-
+# Load detailed results
+detailed_results <- readRDS(here("data", "derived_data", 
+                                 "dist_to_biome_boundary_June25.rds"))
 # Load species list 
 load(here("data", "derived_data", "all_filtered_standardised_species.RData"))
 
@@ -17,43 +17,90 @@ load(here("data", "derived_data", "all_filtered_standardised_species.RData"))
 species_list <- unique(corrected_species_list$CheckedSpeciesName)
 
 
+# 2. FIX MISCALCULATED DISTANCES -----------------------------------------------
+
+# The raw distances are already in meters, convert to km by dividing by 1000
+detailed_results$distance_to_boundary_km_CORRECTED <- detailed_results$distance_to_boundary / 1000
+
+# Recalculate species summaries with corrected distances
+corrected_summaries <- detailed_results |>
+  group_by(species) |>
+  summarise(total_cells = n(),
+            total_occurrences = sum(count),
+            # biome distribution
+            cells_in_boreal = sum(biome == "boreal"),
+            cells_in_tundra = sum(biome == "tundra"),
+            pct_cells_boreal = round(100 * sum(biome == "boreal") / n(), 1),
+            pct_cells_tundra = round(100 * sum(biome == "tundra") / n(), 1),
+            # distance statistics (all cells) - CORRECTED
+            mean_distance_km = round(mean(distance_to_boundary_km_CORRECTED, na.rm = TRUE), 2),
+            median_distance_km = round(median(distance_to_boundary_km_CORRECTED, na.rm = TRUE), 2),
+            sd_distance_km = round(sd(distance_to_boundary_km_CORRECTED, na.rm = TRUE), 2),
+            min_distance_km = round(min(distance_to_boundary_km_CORRECTED, na.rm = TRUE), 2),
+            max_distance_km = round(max(distance_to_boundary_km_CORRECTED, na.rm = TRUE), 2),
+            # distance statistics for boreal cells only
+            mean_distance_boreal_km = round(mean(distance_to_boundary_km_CORRECTED[biome == "boreal"], 
+                                         na.rm = TRUE), 2),
+            median_distance_boreal_km = round(median(distance_to_boundary_km_CORRECTED[biome == "boreal"], 
+                                             na.rm = TRUE), 2),
+            # distance statistics for tundra cells only
+            mean_distance_tundra_km = round(mean(distance_to_boundary_km_CORRECTED[biome == "tundra"], 
+                                         na.rm = TRUE), 2),
+            median_distance_tundra_km = round(median(distance_to_boundary_km_CORRECTED[biome == "tundra"], 
+                                             na.rm = TRUE), 2),
+            # occurrence-weighted distances
+            weighted_mean_distance_km = round(weighted.mean(distance_to_boundary_km_CORRECTED, count, 
+                                                    na.rm = TRUE), 2),
+            # range metrics
+            latitudinal_range_km = round(max_distance_km - min_distance_km, 2),
+            .groups = 'drop')
+
+# Replace NaN with NA for cleaner output
+corrected_summaries[sapply(corrected_summaries, is.nan)] <- NA
+
+# Save corrected results
+saveRDS(corrected_summaries, here("data", "derived_data", 
+                                  "species_summaries_CORRECTED_June25.rds"))
+
+
 # 2. EXPLORE DATA --------------------------------------------------------------
 
 # Check overall structure
-glimpse(species_distances)
+glimpse(corrected_summaries)
 
 # Check the number of species
-length(unique(species_distances$species)) #7573 - many more than originally intended
+length(unique(corrected_summaries$species)) #7573 - many more than originally intended
 
 # Check how many rows with NA values for distances there are 
-sum(is.na(species_distances$mean_distance_boreal_km)) #273
-sum(is.na(species_distances$mean_distance_tundra_km)) # 4995
+sum(is.na(corrected_summaries$mean_distance_boreal_km)) #273
+sum(is.na(corrected_summaries$mean_distance_tundra_km)) #4995
 
 # Plot violins of distances to biome and tundra
-hist(species_distances$mean_distance_tundra_km)
+hist(corrected_summaries$mean_distance_tundra_km)
+hist(corrected_summaries$mean_distance_boreal_km)
 
 # 3. INTERACTIVE SPECIES TABLE -------------------------------------------------
 
 # Filter the summary to only include the species in the original list
-filtered_summaries <- species_distances |>
+filtered_summaries <- corrected_summaries |>
   filter(species %in% species_list)
 
 # Check which species from original list are missing from summaries
-missing_species <- setdiff(species_list, species_distances$species)
+missing_species <- setdiff(species_list, corrected_summaries$species)
 if(length(missing_species) > 0) {
   cat("Species from original list not found in summaries:", length(missing_species), "\n")
   cat("Examples:", paste(head(missing_species, 5), collapse = ", "), "\n")
 }
 
 # Check which species in summaries are not in original list
-extra_species <- setdiff(species_distances$species, species_list)
+extra_species <- setdiff(corrected_summaries$species, species_list)
 if(length(extra_species) > 0) {
   cat("Extra species in summaries (filtered out):", length(extra_species), "\n")
   cat("Examples:", paste(head(extra_species, 5), collapse = ", "), "\n")
 }
 
 # Create the interactive table with search functionality
-interactive_table <- datatable(filtered_summaries,
+interactive_table <- datatable(corrected_summaries,
   # define table options
   options = list(
     # enable search box
@@ -116,6 +163,7 @@ interactive_table <- datatable(filtered_summaries,
     backgroundColor = styleInterval(cuts = 50, values = c('lightblue', 'lightgreen'))) |>
   formatStyle(columns = '% Cells Tundra',
     backgroundColor = styleInterval(cuts = 50, values = c('lightcoral', 'lightgray')))
+
 
 # Display the table
 interactive_table
