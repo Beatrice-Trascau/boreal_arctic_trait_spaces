@@ -159,12 +159,12 @@ print(duplicated_species)
 
 # Remove duplicate records
 filtered_species_list_4 <- filtered_species_list_3 |>
-  distinct(SpeciesName)
+  distinct(SpeciesName, .keep_all = TRUE)
 
 ## 2.4. Visually inspect cleaned species list ----------------------------------
 
 # Create summary statistics for the table
-species_summary <- filtered_species_list_3 |>
+species_summary <- filtered_species_list_4 |>
   group_by(SpeciesName, BiomeCategory) |>
   summarise(Biomes = paste(unique(Biome), collapse = ", "),
             SharedAcrossBiomes = first(SharedAcrossBiomes),
@@ -213,8 +213,12 @@ interactive_table <- datatable(species_summary,
 # Display the table
 interactive_table
 
+# Found one weird record "Hieracium" - remove this record
+filtered_species_list_5 <- filtered_species_list_4 |>
+  filter(SpeciesName != "Hieracium")
+
 # Save cleaned species list
-save(filtered_species_list_4, 
+save(filtered_species_list_5, 
      file = here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
 # 3. TAXON CHECK ---------------------------------------------------------------
@@ -223,10 +227,10 @@ save(filtered_species_list_4,
 load(here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
 # Get list of species
-spp <- unique(filtered_species_list_4$SpeciesName)
+spp <- unique(filtered_species_list_5$SpeciesName)
 
 # Identify empty species names
-empty <- filtered_species_list_4 |> 
+empty <- filtered_species_list_5 |> 
   filter(SpeciesName == " ") # no empty cells
 
 # Load WFO data
@@ -234,7 +238,7 @@ library(WorldFlora)
 WFO.remember('data/WFO_Backbone/classification.csv')
 
 # Create dataframe with unique species names only
-sp_names_only <- filtered_species_list_4 |>
+sp_names_only <- filtered_species_list_5 |>
   distinct(SpeciesName) # 753 records 
 
 # Run taxon check
