@@ -223,10 +223,10 @@ save(filtered_species_list_4,
 load(here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
 # Get list of species
-spp <- unique(filtered_species_list_3$SpeciesName)
+spp <- unique(filtered_species_list_4$SpeciesName)
 
 # Identify empty species names
-empty <- filtered_species_list_3 |> 
+empty <- filtered_species_list_4 |> 
   filter(SpeciesName == " ") # no empty cells
 
 # Load WFO data
