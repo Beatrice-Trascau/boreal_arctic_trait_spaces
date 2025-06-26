@@ -78,7 +78,7 @@ sum(is.na(corrected_summaries$mean_distance_tundra_km)) #4995
 # Plot violins of distances to biome and tundra
 hist(corrected_summaries$mean_distance_tundra_km)
 hist(corrected_summaries$mean_distance_boreal_km)
-
+hist(corrected_summaries$median_distance_km)
 # 3. INTERACTIVE SPECIES TABLE -------------------------------------------------
 
 # Filter the summary to only include the species in the original list
@@ -92,6 +92,7 @@ if(length(missing_species) > 0) {
   cat("Examples:", paste(head(missing_species, 5), collapse = ", "), "\n")
 }
 
+sort(missing_species)
 # Check which species in summaries are not in original list
 extra_species <- setdiff(corrected_summaries$species, species_list)
 if(length(extra_species) > 0) {
@@ -118,8 +119,10 @@ interactive_table <- datatable(corrected_summaries,
     colReorder = TRUE,
     # enable buttons for export
     dom = 'Bfrtip',
-    buttons = c('copy', 'csv', 'excel', 'pdf', 'print')),
+    buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
   
+  # enable column filters
+  columnDefs = list(list(targets = "_all", searchable = TRUE))),
   # add extensions for extra functionality
   extensions = c('Buttons', 'ColReorder'),
   # table styling
@@ -127,7 +130,7 @@ interactive_table <- datatable(corrected_summaries,
   # row names
   rownames = FALSE,
   # column names
-  colnames = c( 'Species' = 'species',
+  colnames = c('Species' = 'species',
                 'Total Cells' = 'total_cells',
                 'Total Occurrences' = 'total_occurrences',
                 'Cells in Boreal' = 'cells_in_boreal',
@@ -144,7 +147,9 @@ interactive_table <- datatable(corrected_summaries,
                 'Mean Distance Tundra (km)' = 'mean_distance_tundra_km',
                 'Median Distance Tundra (km)' = 'median_distance_tundra_km',
                 'Weighted Mean Distance (km)' = 'weighted_mean_distance_km',
-                'Latitudinal Range (km)' = 'latitudinal_range_km')) |>
+                'Latitudinal Range (km)' = 'latitudinal_range_km'),
+  # add column filter
+  filter = 'top') |>
   
   # format numeric columns using the NEW column names (after renaming)
   formatRound(columns = c('Mean Distance (km)', 'Median Distance (km)', 'SD Distance (km)',
