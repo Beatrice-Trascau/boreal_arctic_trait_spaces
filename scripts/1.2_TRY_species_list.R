@@ -206,10 +206,10 @@ save(filtered_species_list_3,
 load(here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
 # Get list of species
-spp <- unique(standardised_species_list$SpeciesName)
+spp <- unique(filtered_species_list_3$SpeciesName)
 
 # Identify empty species names
-empty <- standardised_species_list |> 
+empty <- filtered_species_list_3 |> 
   filter(SpeciesName == " ") # no empty cells
 
 # Load WFO data
@@ -217,8 +217,18 @@ library(WorldFlora)
 WFO.remember('data/WFO_Backbone/classification.csv')
 
 # Create dataframe with unique species names only
-sp_names_only <- standardised_species_list |>
-  distinct(SpeciesName)
+sp_names_only <- filtered_species_list_3 |>
+  distinct(SpeciesName) # 753 records => 10 duplicate records in the filtered_species_list
+
+# Check which records are duplicated
+duplicated_species <- filtered_species_list_3 |>
+  group_by(SpeciesName) |>
+  summarise(Count = n(),
+            .groups = "drop") |>
+  filter(Count > 1) |>
+  arrange(desc(Count))
+print(duplicated_species)
+
 
 # Run taxon check
 taxon_check <- WFO.match(spec.data = sp_names_only,
@@ -228,4 +238,4 @@ taxon_check <- WFO.match(spec.data = sp_names_only,
 
 # Save taxon check to file
 write.csv(taxon_check, here("data", "derived_data",
-                            "WFO_taxon_check_May2025.csv"))
+                            "WFO_taxon_check_26June2025.csv"))
