@@ -144,7 +144,24 @@ filtered_species_list_3  <- filtered_species_list_2 |>
 remaining_multi_word_fixed <- filtered_species_list_3$SpeciesName[
   lengths(strsplit(filtered_species_list_3$SpeciesName, "\\s+")) > 2] #0
 
-## 2.3. Visually inspect cleaned species list ----------------------------------
+## 2.3. Check for duplicate records --------------------------------------------
+
+# Check which records are duplicated
+duplicated_species <- filtered_species_list_3 |>
+  group_by(SpeciesName) |>
+  summarise(Count = n(),
+            .groups = "drop") |>
+  filter(Count > 1) |>
+  arrange(desc(Count))
+
+# Print the duplicate records
+print(duplicated_species)
+
+# Remove duplicate records
+filtered_species_list_4 <- filtered_species_list_3 |>
+  distinct(SpeciesName)
+
+## 2.4. Visually inspect cleaned species list ----------------------------------
 
 # Create summary statistics for the table
 species_summary <- filtered_species_list_3 |>
@@ -197,7 +214,7 @@ interactive_table <- datatable(species_summary,
 interactive_table
 
 # Save cleaned species list
-save(filtered_species_list_3, 
+save(filtered_species_list_4, 
      file = here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
 # 3. TAXON CHECK ---------------------------------------------------------------
@@ -217,18 +234,8 @@ library(WorldFlora)
 WFO.remember('data/WFO_Backbone/classification.csv')
 
 # Create dataframe with unique species names only
-sp_names_only <- filtered_species_list_3 |>
-  distinct(SpeciesName) # 753 records => 10 duplicate records in the filtered_species_list
-
-# Check which records are duplicated
-duplicated_species <- filtered_species_list_3 |>
-  group_by(SpeciesName) |>
-  summarise(Count = n(),
-            .groups = "drop") |>
-  filter(Count > 1) |>
-  arrange(desc(Count))
-print(duplicated_species)
-
+sp_names_only <- filtered_species_list_4 |>
+  distinct(SpeciesName) # 753 records 
 
 # Run taxon check
 taxon_check <- WFO.match(spec.data = sp_names_only,
