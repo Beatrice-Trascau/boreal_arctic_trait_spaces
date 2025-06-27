@@ -14,22 +14,24 @@ library(here)
 source(here("scripts", "0_setup.R"))
 source(here("scripts", "0_GBIF_creds.R"))
 
-## 1.2. GBIF credentials -------------------------------------------------------
-
-# Add your details
-# options(gbif_user = "your_username")
-# options(gbif_pwd = "your_password") 
-# options(gbif_email = "your_email")
-
-## 1.3. Species data -----------------------------------------------------------
+## 1.2. Species data -----------------------------------------------------------
 
 # Load species list 
-load(here("data", "derived_data", "all_filtered_standardised_species.RData"))
+load(here("data", "derived_data", "corrected_species_list_27June2025.RData"))
 
 # Extract species list 
-species_list <- unique(corrected_species_list$CheckedSpeciesName)
+species_list <- unique(corrected_species_list$SpeciesName)
 
-## 1.4. Load and prepare biomes ------------------------------------------------
+# Initialise global species-taxon tracking
+global_species_taxon_mapping <- data.frame(species = character(),
+                                           taxon_key = character(),
+                                           match_type = character(),
+                                           confidence = character(),
+                                           match_status = character(),
+                                           chunk_number = integer(),
+                                           stringsAsFactors = FALSE)
+
+## 1.3. Load and prepare biomes ------------------------------------------------
 
 # Load WWF biomes
 # Citation: Olson, D. M., Dinerstein, E., Wikramanayake, E. D., Burgess, N. D., Powell, G. V. N., Underwood, E. C., D'Amico, J. A., Itoua, I., Strand, H. E., Morrison, J. C., Loucks, C. J., Allnutt, T. F., Ricketts, T. H., Kura, Y., Lamoreux, J. F., Wettengel, W. W., Hedao, P., Kassem, K. R. 2001. Terrestrial ecoregions of the world: a new map of life on Earth. Bioscience 51(11):933-938.
@@ -47,8 +49,12 @@ boreal_forest <- st_make_valid(boreal_forest)
 tundra <- st_make_valid(tundra)
 
 # Transform to WGS84 for GBIF compatibility
-boreal_forest <- st_transform(boreal_forest, "EPSG:4326")
-tundra <- st_transform(tundra, "EPSG:4326")
+boreal_forest_wgs84 <- st_transform(boreal_forest, "EPSG:4326")
+tundra_wgs84 <- st_transform(tundra, "EPSG:4326")
+
+# Transform biomes to North Pole Lambert Azimuthal Equal Area (EPSG: 3574) for spatial analysis
+boreal_forest <- st_transform(boreal_forest, "EPSG:3574")
+tundra <- st_transform(tundra, "EPSG:3574")
 
 ## 1.4. Create analysis grid ---------------------------------------------------
 
@@ -58,10 +64,10 @@ combined_biomes <- st_union(boreal_forest, tundra)
 # Create bounding box from the combined biomes
 combined_extent <- st_bbox(combined_biomes)
 
-# Create grid with 0.45 degrees resolution (~50km at high latitudes)
+# Create grid with 0.45 degrees resolution (50km at high latitudes)
 grid <- rast(extent = combined_extent, 
-             resolution = c(0.45, 0.45),
-             crs = "EPSG:4326")
+             resolution = c(50000, 50000),  # 50km 
+             crs = "EPSG:3574")
 
 # Convert to polygons
 polygrid <- as.polygons(grid)
@@ -103,14 +109,18 @@ process_species_chunk_with_distances <- function(species_list, grid_polygons, bo
   cat("=== Processing Chunk", chunk_number, "===\n")
   cat("Species:", paste(species_list, collapse = ", "), "\n")
   
-  # Get study area WKT
-  study_area_wkt <- st_as_text(st_as_sfc(st_bbox(st_union(boreal_sf, tundra_sf))))
+  # Get study area WKT (in WGS84 for GBIF compatibility)
+  study_area_wkt <- st_as_text(st_as_sfc(st_bbox(st_union(boreal_forest_wgs84, tundra_wgs84))))
   
   ### 2.1.1. Get taxon keys for species ----------------------------------------
   
   # Create data frame to store taxon information in
   taxon_info <- data.frame(species = species_list,
                            taxon_key = NA,
+                           match_type = NA,
+                           confidence = NA,
+                           match_status = "FAILED",
+                           chunk_number = chunk_number,
                            stringsAsFactors = FALSE)
   
   # Loop to look up taxon keys for each item on the species list
