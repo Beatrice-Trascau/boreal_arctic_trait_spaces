@@ -128,12 +128,22 @@ process_species_chunk_with_distances <- function(species_list, grid_polygons, bo
     tryCatch({
       backbone <- name_backbone(species_list[i])
       if(!is.null(backbone$usageKey) && !is.na(backbone$usageKey)) {
-        taxon_info$taxon_key[i] <- backbone$usageKey
-        cat("  ✓", species_list[i], ":", backbone$usageKey, "\n")
+        taxon_info$taxon_key[i] <- as.character(backbone$usageKey)
+        taxon_info$match_type[i] <- ifelse(is.null(backbone$matchType), "UNKNOWN", backbone$matchType)
+        taxon_info$confidence[i] <- ifelse(is.null(backbone$confidence), "UNKNOWN", 
+                                           as.character(backbone$confidence))
+        taxon_info$match_status[i] <- "SUCCESS"
+        cat("  ✓", species_list[i], ":", backbone$usageKey, 
+            "(", backbone$matchType, ",", backbone$confidence, ")\n")
       } else {
-        cat("  ✗ No taxon key for", species_list[i], "\n")
+        taxon_info$match_type[i] <- ifelse(is.null(backbone$matchType), "NO_MATCH", backbone$matchType)
+        taxon_info$confidence[i] <- "N/A"
+        cat("  ✗ No taxon key for", species_list[i], 
+            "- Match type:", taxon_info$match_type[i], "\n")
       }
     }, error = function(e) {
+      taxon_info$match_type[i] <- "ERROR"
+      taxon_info$confidence[i] <- "N/A"
       cat("  ✗ Error with", species_list[i], ":", e$message, "\n")
     })
     Sys.sleep(0.5)
