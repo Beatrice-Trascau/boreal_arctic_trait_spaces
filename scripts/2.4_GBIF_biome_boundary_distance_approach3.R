@@ -58,7 +58,7 @@ tundra <- st_transform(tundra, "EPSG:3574")
 
 ## 1.4. Create analysis grid ---------------------------------------------------
 
-# Combine biomes to use for the grid extent
+# Combine biomes to use for the grid extent (in EPSG:3574)
 combined_biomes <- st_union(boreal_forest, tundra)
 
 # Create bounding box from the combined biomes
@@ -301,8 +301,8 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
   ### 2.2.4. Calculate distances to biome boundaries ---------------------------
   
   # Get boundaries of both biomes
-  boreal_boundary <- st_boundary(boreal_sf)
-  tundra_boundary <- st_boundary(tundra_sf)
+  boreal_boundary_proj <- st_boundary(boreal_sf_proj)
+  tundra_boundary_proj <- st_boundary(tundra_sf_proj)
   
   # Get centroids of cells with occurrences
   unique_cells <- unique(counts_filtered$cell_id)
@@ -311,7 +311,7 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
   
   # Calculate distances for each cell
   distance_lookup <- data.frame(cell_id = cell_centroids$cell_id,
-                                distance_to_boundary = NA,
+                                distance_to_boundary_m = NA,
                                 stringsAsFactors = FALSE)
   
   # Add cell information 
@@ -332,8 +332,8 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
     }
   }
   
-  # Convert distances from degrees to kilometers
-  distance_lookup$distance_to_boundary_km <- distance_lookup$distance_to_boundary * 111
+  # Convert distances from meters to kilometers
+  distance_lookup$distance_to_boundary_km <- distance_lookup$distance_to_boundary / 1000
   
   
   ### 2.2.5. Merge and finalize results ----------------------------------------
