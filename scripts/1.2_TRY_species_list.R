@@ -223,6 +223,8 @@ save(filtered_species_list_5,
 
 # 3. TAXON CHECK ---------------------------------------------------------------
 
+## 3.1. Run taxon check --------------------------------------------------------
+
 # Load cleaned species list
 load(here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
@@ -250,3 +252,78 @@ taxon_check <- WFO.match(spec.data = sp_names_only,
 # Save taxon check to file
 write.csv(taxon_check, here("data", "derived_data",
                             "WFO_taxon_check_26June2025.csv"))
+
+## 3.2. Check record count mismatch --------------------------------------------
+
+# Spp list = 752 but taxon_check = 1072
+
+# Check for duplicates in taxon_check
+duplicates_in_taxon_check <- taxon_check |>
+  group_by(SpeciesName.ORIG) |>
+  summarise(count = n(), .groups = "drop") |>
+  filter(count > 1) |>
+  arrange(desc(count))
+nrow(duplicates_in_taxon_check) # 191 species appear multiple times in taxon check
+
+# Check why there are multiple matches
+multi_match_analysis <- taxon_check |>
+  group_by(SpeciesName.ORIG) |>
+  summarise(match_count = n(),
+            unique_scientific_names = n_distinct(scientificName),
+            fuzzy_matches = sum(Fuzzy, na.rm = TRUE),
+            accepted_matches = sum(taxonomicStatus == "Accepted", na.rm = TRUE),
+            .groups = "drop") |>
+  filter(match_count > 1)
+print(head(multi_match_analysis, 10))
+
+# Check sequence information
+sequence_info <- taxon_check |>
+  select(SpeciesName.ORIG, scientificName, OriSeq, Subseq, Matched, Fuzzy) |>
+  arrange(OriSeq, Subseq) |>
+  head(20)
+
+print(sequence_info)
+
+## 3.3. Check taxon match issues -----------------------------------------------
+
+# Check for unmatched records
+unmatched <- taxon_check |> 
+  filter(Matched == FALSE | is.na(Matched)) # 2 records: Casteleja occidens & Sausarrea angustifolium
+if(nrow(unmatched) > 0) {
+  cat("These species names were not found in WFO:\n")
+  print(unmatched |> select(SpeciesName, SpeciesName.ORIG) |> head(10))
+  if(nrow(unmatched) > 10) cat("... and", nrow(unmatched) - 10, "more\n")
+}
+
+# Check for fuzzy matches
+fuzzy_matches <- taxon_check |> 
+  filter(Fuzzy == TRUE) # 38 records with fuzzy match
+if(nrow(fuzzy_matches) > 0) {
+  fuzzy_comparison <- fuzzy_matches |> 
+    select(Original = SpeciesName.ORIG, Matched = scientificName, Distance = Fuzzy.dist) |>
+    head(10)
+  print(fuzzy_comparison)
+  if(nrow(fuzzy_matches) > 10) cat("... and", nrow(fuzzy_matches) - 10, "more\n")
+}
+
+# Check for hybrids
+hybrids <- taxon_check |> 
+  filter(Hybrid == TRUE)
+if(nrow(hybrids) > 0) {
+  cat("These are identified as hybrids:\n")
+  print(hybrids |> select(SpeciesName.ORIG, scientificName) |> head(10))
+} # no hybrids
+
+# Check for records with brackets
+brackets <- taxon_check |> filter(Brackets.detected == TRUE)
+if(nrow(brackets) > 0) {
+  cat("Bracket examples:\n")
+  print(brackets |> select(SpeciesName.ORIG) |> head(5))
+} # no records with brackets
+
+# Check for records with numbers
+numbers <- taxon_check |> filter(Number.detected == TRUE)
+if(nrow(numbers) > 0) {
+  cat("Number examples:\n")
+  print(numbers |> select(SpeciesName.ORIG) |> head(5)) 
+} # no records with numbers
