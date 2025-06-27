@@ -53,13 +53,13 @@ boreal_forest_wgs84 <- st_transform(boreal_forest, "EPSG:4326")
 tundra_wgs84 <- st_transform(tundra, "EPSG:4326")
 
 # Transform biomes to North Pole Lambert Azimuthal Equal Area (EPSG: 3574) for spatial analysis
-boreal_forest <- st_transform(boreal_forest, "EPSG:3574")
-tundra <- st_transform(tundra, "EPSG:3574")
+boreal_sf <- st_transform(boreal_forest, "EPSG:3574")
+tundra_sf <- st_transform(tundra, "EPSG:3574")
 
 ## 1.4. Create analysis grid ---------------------------------------------------
 
 # Combine biomes to use for the grid extent (in EPSG:3574)
-combined_biomes <- st_union(boreal_forest, tundra)
+combined_biomes <- st_union(boreal_sf, tundra_sf)
 
 # Create bounding box from the combined biomes
 combined_extent <- st_bbox(combined_biomes)
@@ -79,10 +79,10 @@ polygrid$cell_id <- 1:nrow(polygrid)
 polygrid_sf <- st_as_sf(polygrid)
 
 # Filter cells within boreal biome
-cells_in_boreal <- st_intersects(polygrid_sf, boreal_forest, sparse = FALSE)[,1]
+cells_in_boreal <- st_intersects(polygrid_sf, boreal_sf, sparse = FALSE)[,1]
 
 # Filter cells within tundra biome
-cells_in_tundra <- st_intersects(polygrid_sf, tundra, sparse = FALSE)[,1]
+cells_in_tundra <- st_intersects(polygrid_sf, tundra_sf, sparse = FALSE)[,1]
 
 # Get cells in both biomes
 cells_in_biomes <- cells_in_boreal | cells_in_tundra
@@ -301,8 +301,8 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
   ### 2.2.4. Calculate distances to biome boundaries ---------------------------
   
   # Get boundaries of both biomes
-  boreal_boundary_proj <- st_boundary(boreal_sf_proj)
-  tundra_boundary_proj <- st_boundary(tundra_sf_proj)
+  boreal_boundary <- st_boundary(boreal_sf)
+  tundra_boundary <- st_boundary(tundra_sf)
   
   # Get centroids of cells with occurrences
   unique_cells <- unique(counts_filtered$cell_id)
@@ -323,24 +323,24 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
     if(cell_info$in_boreal) {
       # Cell is in boreal forest - distance to boreal boundary (positive)
       dist_to_boundary <- as.numeric(st_distance(centroid, boreal_boundary))
-      distance_lookup$distance_to_boundary[i] <- mean(dist_to_boundary)
+      distance_lookup$distance_to_boundary_m[i] <- mean(dist_to_boundary)
       
     } else if(cell_info$in_tundra) {
       # Cell is in tundra - distance to tundra boundary (negative)
       dist_to_boundary <- as.numeric(st_distance(centroid, tundra_boundary))
-      distance_lookup$distance_to_boundary[i] <- -mean(dist_to_boundary)
+      distance_lookup$distance_to_boundary_m[i] <- -mean(dist_to_boundary)
     }
   }
   
   # Convert distances from meters to kilometers
-  distance_lookup$distance_to_boundary_km <- distance_lookup$distance_to_boundary / 1000
+  distance_lookup$distance_to_boundary_km <- distance_lookup$distance_to_boundary_m / 1000
   
   
   ### 2.2.5. Merge and finalize results ----------------------------------------
   
   # Merge distances with counts
   final_results <- merge(counts_filtered, 
-                         distance_lookup[, c("cell_id", "distance_to_boundary", 
+                         distance_lookup[, c("cell_id", "distance_to_boundary_m", 
                                              "distance_to_boundary_km")], 
                          by = "cell_id")
   
@@ -595,8 +595,8 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
       chunk_output <- process_species_chunk_with_distances(
         current_species, 
         polygrid_filtered, 
-        boreal_forest, 
-        tundra,
+        boreal_sf, 
+        tundra_sf,
         chunk_i)
       
       # Extract results and metadata
@@ -680,14 +680,6 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
     cat("  - species_summaries_dist_to_biome_boundary_EPSG3574_June27.rds/.csv (species-level statistics)\n")
     cat("  - biome_boundary_gbif_download_citations_final_EPSG3574_June27.txt (citation information)\n")
     cat("  - species_taxon_key_mapping_final_June27.csv/.txt/.rds (species-taxon mappings with confidence)\n")
-    
-    cat("\n=== ANALYSIS COMPLETE ===\n")
-    cat("Total cell-species results:", nrow(final_results), "\n")
-    cat("Species analyzed:", length(unique(final_results$species)), "\n")
-    cat("Files saved:\n")
-    cat("  - species_analysis_final_results.rds/.csv (all cell-level data)\n")
-    cat("  - species_summaries.rds/.csv (species-level statistics)\n")
-    cat("  - gbif_download_citations_final.txt (citation information)\n")
     
     # Summary statistics
     cat("\nOverall Summary:\n")
