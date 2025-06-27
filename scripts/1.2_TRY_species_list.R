@@ -327,3 +327,61 @@ if(nrow(numbers) > 0) {
   cat("Number examples:\n")
   print(numbers |> select(SpeciesName.ORIG) |> head(5)) 
 } # no records with numbers
+
+## 3.4. Fix taxon check issues -------------------------------------------------
+
+# Fix unmatched records (i.e. misspelled records)
+corrected_species_list_1 <- filtered_species_list_5 |>
+  mutate(SpeciesName_original = SpeciesName, # keep original for reference
+         SpeciesName = case_when(SpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
+                                 SpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
+                                 .default = SpeciesName))
+
+# Review fuzzy matches
+fuzzy_review <- fuzzy_matches |>
+  select(Original = SpeciesName.ORIG, Matched = scientificName, 
+         Distance = Fuzzy.dist, Status = taxonomicStatus) |>
+  arrange(Distance)
+View(fuzzy_review)
+
+# Manual fix for fuzzy matches
+corrected_species_list_2 <- corrected_species_list_1 |>
+  mutate(SpeciesName = case_when(
+    SpeciesName == "Spirodela polyrrhiza" ~ "Spirodela polyrhiza",
+    SpeciesName == "Salix doniana" ~ "Salix purpurea",
+    SpeciesName == "Silene samojedora" ~ "Silene samojedorum",
+    SpeciesName == "Salix myrtifolia" ~ "Salix myrtillifolia",
+    SpeciesName == "Calamagrostis purpuras" ~ "Calamagrostis purpurea",
+    SpeciesName == "Pedicularis vertisilata" ~ "Pedicularis verticillata",
+    SpeciesName == "Peticites frigidus" ~ "Petasites frigidus",
+    SpeciesName == "Senecio atropurpuris" ~ "Senecio atropurpureus",
+    SpeciesName == "Gentia glauca" ~ "Gentiana glauca",
+    SpeciesName == "Polemonium acutifolium" ~ "Polemonium acutiflorum",
+    SpeciesName == "Rumex lapponum" ~ "Rumex lapponicus",
+    SpeciesName == "Pedicularis vertillis" ~ "Pedicularis verticillata",
+    SpeciesName == "Sabulina rossii" ~ "Sabulina rosei",
+    SpeciesName == "Echinops crispus" ~ "Echinops ritro",
+    SpeciesName == "Salix fuscenses" ~ "Salix fuscescens",
+    SpeciesName == "Salix laponicum" ~ "Salix lapponum",
+    SpeciesName == "Senecio atropupuris" ~ "Senecio atropurpureus",
+    SpeciesName == "Salix argyocarpon" ~ "Salix argyrocarpa",
+    SpeciesName == "Salix herbaceae-polaris" ~ "Salix herbacea",
+    .default = SpeciesName))
+
+# Check for duplicate records
+duplicated_species <- corrected_species_list_2 |>
+  group_by(SpeciesName) |>
+  summarise(Count = n(),
+            .groups = "drop") |>
+  filter(Count > 1) |>
+  arrange(desc(Count)) # all duplicates look normal
+
+# Remove duplicates
+corrected_species_list <- corrected_species_list_2 |>
+  distinct(SpeciesName, .keep_all = TRUE) # 739 species
+
+# Write corrected species list to file
+save(corrected_species_list, file = here("data", "derived_data", 
+                                         "corrected_species_list_27June2025.RData"))
+
+# END OF SCRIPT ----------------------------------------------------------------  
