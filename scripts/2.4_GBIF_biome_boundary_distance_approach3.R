@@ -409,7 +409,7 @@ save_gbif_citations <- function(download_metadata_list, filename = "gbif_downloa
     return()
   }
   
-  ### 2.4.1. Create fiel to store citations ------------------------------------
+  ### 2.4.1. Create file to store citations ------------------------------------
   citation_lines <- c("GBIF Download Citations",
                       "=" %>% rep(50) %>% paste(collapse = ""),
                       paste("Generated on:", Sys.time()),"",
@@ -470,6 +470,92 @@ save_gbif_citations <- function(download_metadata_list, filename = "gbif_downloa
   # Also save as RDS for programmatic access
   saveRDS(download_metadata_list, gsub("\\.txt$", ".rds", filename))
   cat("Metadata saved to:", gsub("\\.txt$", ".rds", filename), "\n")
+}
+
+## 2.5. Function to save species-taxon key mappings ----------------------------
+save_species_taxon_mapping <- function(mapping_df, filename_base = "species_taxon_key_mapping"){
+  
+  # Create summary statistics
+  total_species <- nrow(mapping_df)
+  successful_matches <- sum(mapping_df$match_status == "SUCCESS")
+  failed_matches <- sum(mapping_df$match_status == "FAILED")
+  error_matches <- sum(mapping_df$match_type == "ERROR")
+  
+  # Save as CSV
+  csv_filename <- paste0(filename_base, "_", format(Sys.Date(), "%B%d"), ".csv")
+  write.csv(mapping_df, here("data", "derived_data", csv_filename), row.names = FALSE)
+  
+  # Create a detailed text report
+  txt_filename <- paste0(filename_base, "_", format(Sys.Date(), "%B%d"), ".txt")
+  
+  report_lines <- c(
+    "Species-Taxon Key Mapping Report",
+    "=" %>% rep(50) %>% paste(collapse = ""),
+    paste("Generated on:", Sys.time()),
+    paste("Analysis completed using EPSG:3574 projection"),
+    "",
+    "SUMMARY STATISTICS:",
+    "-" %>% rep(30) %>% paste(collapse = ""),
+    paste("Total species processed:", total_species),
+    paste("Successful matches:", successful_matches, paste0("(", round(100*successful_matches/total_species, 1), "%)")),
+    paste("Failed matches:", failed_matches, paste0("(", round(100*failed_matches/total_species, 1), "%)")),
+    paste("Errors:", error_matches, paste0("(", round(100*error_matches/total_species, 1), "%)")),
+    "",
+    "MATCH TYPE BREAKDOWN:",
+    "-" %>% rep(30) %>% paste(collapse = ""),
+    ""
+  )
+  
+  # Add match type breakdown
+  if(nrow(mapping_df) > 0) {
+    match_type_summary <- table(mapping_df$match_type)
+    for(match_type in names(match_type_summary)) {
+      count <- match_type_summary[match_type]
+      pct <- round(100 * count / total_species, 1)
+      report_lines <- c(report_lines, paste("  ", match_type, ":", count, paste0("(", pct, "%)")))
+    }
+  }
+  
+  report_lines <- c(report_lines,
+                    "",
+                    "CONFIDENCE BREAKDOWN (for successful matches):",
+                    "-" %>% rep(30) %>% paste(collapse = ""),
+                    ""
+  )
+  
+  # Add confidence breakdown for successful matches
+  successful_mapping <- mapping_df[mapping_df$match_status == "SUCCESS" & mapping_df$confidence != "N/A", ]
+  if(nrow(successful_mapping) > 0) {
+    confidence_summary <- table(successful_mapping$confidence)
+    for(confidence in names(confidence_summary)) {
+      count <- confidence_summary[confidence]
+      pct <- round(100 * count / successful_matches, 1)
+      report_lines <- c(report_lines, paste("  ", confidence, ":", count, paste0("(", pct, "% of successful)")))
+    }
+  }
+  
+  report_lines <- c(report_lines,
+                    "",
+                    "DETAILED MAPPINGS:",
+                    "-" %>% rep(30) %>% paste(collapse = ""),
+                    "See the CSV file for complete species-by-species details.",
+                    "",
+                    paste("CSV file saved as:", csv_filename),
+                    paste("RDS file saved as:", gsub("\\.csv$", ".rds", csv_filename))
+  )
+  
+  # Write text report
+  writeLines(report_lines, here("data", "derived_data", txt_filename))
+  
+  # Save as RDS for programmatic access
+  rds_filename <- gsub("\\.csv$", ".rds", csv_filename)
+  saveRDS(mapping_df, here("data", "derived_data", rds_filename))
+  
+  cat("Species-taxon key mapping saved:\n")
+  cat("  Text report:", txt_filename, "\n")
+  cat("  CSV file:", csv_filename, "\n")
+  cat("  RDS file:", rds_filename, "\n")
+  cat("Summary: ", successful_matches, "/", total_species, " species successfully matched\n")
 }
 
 # 3. MAIN ANALYSIS FUNCTIONS ---------------------------------------------------
