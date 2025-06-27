@@ -149,6 +149,9 @@ process_species_chunk_with_distances <- function(species_list, grid_polygons, bo
     Sys.sleep(0.5)
   }
   
+  # Update global tracking
+  global_species_taxon_mapping <<- rbind(global_species_taxon_mapping, taxon_info)
+  
   # Store valid keys in the dataframe
   valid_keys <- taxon_info$taxon_key[!is.na(taxon_info$taxon_key)]
   
@@ -199,7 +202,7 @@ process_species_chunk_with_distances <- function(species_list, grid_polygons, bo
     cat("Downloading file...\n")
     zip_file <- occ_download_get(download_key, path = tempdir(), overwrite = TRUE)
     
-    # Process the donwloaded data with distances (using function defined above)
+    # Process the donwloaded data with distances (using function defined below)
     results <- process_occurrence_data_with_distances(zip_file, grid_polygons, boreal_sf, tundra_sf)
     
     # Clean up
@@ -264,8 +267,11 @@ process_occurrence_data_with_distances <- function(zip_file, grid_polygons, bore
                      coords = c("decimalLongitude", "decimalLatitude"),
                      crs = 4326)
   
+  # Transform occurrences to EPSG:3574 to match the grid
+  occ_sf_proj <- st_transform(occ_sf, "EPSG:3574")
+  
   # Spatial join with grid
-  joined <- st_join(occ_sf, grid_polygons)
+  joined <- st_join(occ_sf_proj, grid_polygons)
   joined_clean <- joined[!is.na(joined$cell_id), ]
   
   # Check how many occurrences there were
