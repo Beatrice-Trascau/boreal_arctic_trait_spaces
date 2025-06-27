@@ -668,6 +668,19 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
     save_gbif_citations(all_download_metadata, here("data", "derived_data", 
                                                     "biome_boundary_gbif_download_citations_final_June25.txt"))
     
+    # Save final species-taxon key mapping
+    save_species_taxon_mapping(global_species_taxon_mapping, "species_taxon_key_mapping_final")
+    
+    cat("\n=== ANALYSIS COMPLETE ===\n")
+    cat("Total cell-species results:", nrow(final_results), "\n")
+    cat("Species analyzed:", length(unique(final_results$species)), "\n")
+    cat("Species-taxon mappings tracked:", nrow(global_species_taxon_mapping), "\n")
+    cat("Files saved:\n")
+    cat("  - dist_to_biome_boundary_EPSG3574_June27.rds/.csv (all cell-level data)\n")
+    cat("  - species_summaries_dist_to_biome_boundary_EPSG3574_June27.rds/.csv (species-level statistics)\n")
+    cat("  - biome_boundary_gbif_download_citations_final_EPSG3574_June27.txt (citation information)\n")
+    cat("  - species_taxon_key_mapping_final_June27.csv/.txt/.rds (species-taxon mappings with confidence)\n")
+    
     cat("\n=== ANALYSIS COMPLETE ===\n")
     cat("Total cell-species results:", nrow(final_results), "\n")
     cat("Species analyzed:", length(unique(final_results$species)), "\n")
@@ -678,19 +691,34 @@ analyze_species_list <- function(species_list, chunk_size = 5, start_chunk = 1){
     
     # Summary statistics
     cat("\nOverall Summary:\n")
+    cat("Projection used: EPSG:3574 (North Pole Lambert Azimuthal Equal Area)\n")
     cat("Boreal cells:", sum(final_results$biome == "boreal"), "\n")
     cat("Tundra cells:", sum(final_results$biome == "tundra"), "\n")
     cat("Distance range (km):", range(final_results$distance_to_boundary_km, na.rm = TRUE), "\n")
     cat("GBIF downloads used:", length(all_download_metadata), "\n")
     
+    # Species mapping summary
+    successful_matches <- sum(global_species_taxon_mapping$match_status == "SUCCESS")
+    total_species <- nrow(global_species_taxon_mapping)
+    cat("Species successfully matched to GBIF:", successful_matches, "/", total_species, 
+        "(", round(100*successful_matches/total_species, 1), "%)\n")
+    
     return(list(
       results = final_results,
       species_summaries = species_summaries,
-      download_metadata = all_download_metadata
+      download_metadata = all_download_metadata,
+      species_taxon_mapping = global_species_taxon_mapping
     ))
   } else {
     cat("No results produced\n")
-    return(list(results = data.frame(), species_summaries = data.frame(), download_metadata = list()))
+    # Still save the species-taxon mapping even if no occurrence data was found
+    if(nrow(global_species_taxon_mapping) > 0) {
+      save_species_taxon_mapping(global_species_taxon_mapping, "species_taxon_key_mapping_final")
+    }
+    return(list(results = data.frame(), 
+                species_summaries = data.frame(), 
+                download_metadata = list(),
+                species_taxon_mapping = global_species_taxon_mapping))
   }
 }
 
