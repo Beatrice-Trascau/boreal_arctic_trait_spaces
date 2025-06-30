@@ -1,6 +1,6 @@
 ##----------------------------------------------------------------------------##
 # PAPER 3: BOREAL AND ARCTIC PLANT SPECIES TRAIT SPACES 
-# 2.4_GBIF_biome_boundary_distance_approach3
+# 2.4_GBIF_biome_boundary_distance
 # This script contains code which calcualtes the distance to biome boundary for
 # each species in our list with a third approach
 ##----------------------------------------------------------------------------##
