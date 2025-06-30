@@ -7,9 +7,11 @@
 
 # 1. TRY DATA -----------------------------------------------------------------
 
-# Load data
+# Setup
 library(here)
 source(here("scripts", "0_setup.R"))
+
+# Load data
 load(here("data", "raw_data", "try_beatrice.RData"))
 try_raw <- try.final.control
 
@@ -74,12 +76,7 @@ tundra_try_data$biome <- "tundra"
 # Combine the two
 try_filtered <- rbind(boreal_try_data, tundra_try_data)
 
-# Save filtered data to file
-#save(try_filtered, file = here("data", "derived_data", "try_filtered.RData"))
-
 # 4. CREATE SPECIES LIST -------------------------------------------------------
-
-## 4.1. Extract species list ---------------------------------------------------
 
 # Extract unique species for each biome
 boreal_species <- unique(boreal_try_data$AccSpeciesName)
@@ -100,179 +97,9 @@ all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundr
                           SharedAcrossBiomes = c(boreal_species %in% common_species, 
                          setdiff(tundra_species, boreal_species) %in% common_species))
 
-## 4.2. Remove morphospecies from list -----------------------------------------
 
-# Filter out morphospecies from list
-filtered_species_list <- all_filtered_species |>
-  filter(!grepl("\\bsp\\.$|\\bsp\\b", SpeciesName) &
-           # remove generic species names
-           !SpeciesName %in% c("Grass", "Fern", "Unknown") &
-           # remove suspect species names
-           !SpeciesName %in% c("Hieracium sect.")) |>
-  mutate(SpeciesName = if_else(SpeciesName == "Eri sch", "Eriophorum scheuchzeri", SpeciesName))
-
-# Check how many records were removed
-cat("Original species count:", nrow(all_filtered_species), "\n") # 800
-cat("Filtered species count:", nrow(filtered_species_list), "\n") # 770
-cat("Number of morphospecies/generic entries removed:", 
-    nrow(all_filtered_species) - nrow(filtered_species_list), "\n") # 30
-
-# Check which records have been removed
-removed_species <- anti_join(all_filtered_species, filtered_species_list, 
-                             by = "SpeciesName")
-print(removed_species)
-
-## 4.3. Standardise subspecies/varieties to species level ----------------------
-
-# Extract list of subspecies/varieties
-subspecies_varieties <- filtered_species_list |>
-  filter(grepl("subsp\\.", SpeciesName) | 
-           grepl("var\\.", SpeciesName) |
-           grepl("sect\\.", SpeciesName))
-
-# Count how many records there were in each group
-subspecies_count <- sum(grepl("subsp\\.", filtered_species_list$SpeciesName))
-varieties_count <- sum(grepl("var\\.", filtered_species_list$SpeciesName))
-sections_count <- sum(grepl("sect\\.", filtered_species_list$SpeciesName))
-
-# Print results
-cat("Total records with subspecies/varieties/sections:", nrow(subspecies_varieties), "\n")
-cat("Subspecies (subsp.):", subspecies_count, "\n")
-cat("Varieties (var.):", varieties_count, "\n")
-cat("Sections (sect.):", sections_count, "\n")
-
-# Standardise records
-standardised_subspecies <- subspecies_varieties |>
-  # replace everything after and including "subsp.", "var.", or "sect." with nothing
-  mutate(StandardSpeciesName = str_replace(SpeciesName, " (subsp\\.|var\\.|sect\\.).*$", "")) %>%
-  # use the standardized name instead of the original
-  select(SpeciesName = StandardSpeciesName, Biome, SharedAcrossBiomes)
-
-# Get species names that do not have subspecies/varieties etc
-regular_species <- filtered_species_list |>
-  filter(!grepl("subsp\\.", SpeciesName) &
-         !grepl("var\\.", SpeciesName) &
-         !grepl("sect\\.", SpeciesName))
-
-# Combine the datasets and remove duplicates
-standardised_species_list <- bind_rows(regular_species,
-                                       standardised_subspecies) |>
-  distinct() |>
-  mutate(BiomeCategory = case_when(
-    SharedAcrossBiomes ~ "BorealArctic",
-    Biome == "Boreal" ~ "Boreal specialist",
-    Biome == "Tundra" ~ "Arctic specialist"))
-
-# Check the counts
-cat("Original filtered species count:", nrow(filtered_species_list), "\n")
-cat("Number of subspecies/varieties found:", nrow(subspecies_varieties), "\n")
-cat("Number of regular species:", nrow(regular_species), "\n")
-cat("Final standardized species count:", nrow(standardised_species_list), "\n")
-
-## 4.4. Check classification of species ----------------------------------------
-
-# Load Mariana's dataset
-classification <- read.csv(here("data", "raw_data", "species_ab_class_jan2025.csv"))
-
-# Check types of classification
-unique(classification$ClassNew)
-
-# Standardise classifications for ease of comparison
-classification <- classification |>
-  mutate(ClassNew = ifelse(ClassNew %in% c("Boreal-tundra boundary", "Ubiquitous"),
-                           "BorealArctic", ClassNew))
-
-# Ensure species names are in the same formats in both dfs
-comparison_results <- standardised_species_list |>
-  # select only relevant columns
-  select(SpeciesName, BiomeCategory) |>
-  # join with Mariana's df
-  left_join(classification |>
-              select(SpeciesName = SPECIES_CLEAN, PaperClassification = ClassNew), 
-            by = "SpeciesName") |>
-  # create a match indicator for species that are in both datasets
-  mutate(FoundInBoth = !is.na(PaperClassification),
-         ClassificationMatch = case_when(is.na(PaperClassification) ~ NA,
-                                         BiomeCategory == PaperClassification ~ TRUE,
-                                         TRUE ~ FALSE))
-
-# Extract list of discrepancies
-discrepancies <- comparison_results |>
-  filter(FoundInBoth & !ClassificationMatch) |>
-  select(SpeciesName, MyClassification = BiomeCategory, PaperClassification)
-
-
-# Save species list
-#save(standardised_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
-
-## 4.4. Taxonomic check --------------------------------------------------------
-
-# Get list of species
-spp <- unique(standardised_species_list$SpeciesName)
-
-# Identify empty species names
-empty <- standardised_species_list |> 
-  filter(SpeciesName == " ") # no empty cells
-
-# Load WFO data
-# library(WorldFlora)
-# WFO.remember('data/WFO_Backbone/classification.csv')
-
-# Create dataframe with unique species names only
-sp_names_only <- standardised_species_list |>
-  distinct(SpeciesName)
-
-# Run taxon check
-# taxon_check <- WFO.match(spec.data = sp_names_only,
-#                          spec.name = "SpeciesName",
-#                          WFO.file = 'data/WFO_Backbone/classification.csv',
-#                          no.dates = TRUE)
-
-# Save taxon check to file
-# write.csv(taxon_check, here("data", "derived_data", 
-#                             "WFO_taxon_check_May2025.csv"))
-
-# Load taxon check file
-taxon_check <- read.csv(here("data", "derived_data", 
-                             "WFO_taxon_check_May2025.csv"))
-
-# Check records that were not matched
-taxon_unmatched <- taxon_check |>
-  filter(Matched == FALSE) # 2 misspelled species names
-
-# Fix misspelled names
-taxon_unmatched_fix <- taxon_check |>
-  mutate(SpeciesName = case_when(SpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
-                                 SpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
-                                 .default = SpeciesName))
- 
-# Check records that don't match
-to_fix <- taxon_unmatched_fix |> 
-  mutate(SPECIES_CLEAN = case_when(SpeciesName != scientificName ~ scientificName,
-                                   TRUE ~ SpeciesName),
-         names_match = SpeciesName == scientificName) |>
-  select(SpeciesName, scientificName, family, SPECIES_CLEAN) |>
-  distinct(SpeciesName, .keep_all = TRUE)
-
-# Add corrected names into species list
-corrected_species_list <- standardised_species_list |>
-  left_join(to_fix |> select(SpeciesName, SPECIES_CLEAN),
-            by = "SpeciesName") |>
-  mutate(CheckedSpeciesName = ifelse(!is.na(SPECIES_CLEAN), SPECIES_CLEAN, SpeciesName)) |>
-  select(-SPECIES_CLEAN)
-
-# Check species names
-unique(corrected_species_list$CheckedSpeciesName) # some name are still problematic
-
-# Remove/fix problematic "species" names
-corrected_species_list <- corrected_species_list |>
-  mutate(CheckedSpeciesName = case_when(CheckedSpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
-                                        CheckedSpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
-                                        .default = CheckedSpeciesName)) |>
-  filter(!CheckedSpeciesName %in% c("Echinops", "Stellaria", "Salix"))
-
-# Save corrected species list
-#save(corrected_species_list, file = here("data", "derived_data", "all_filtered_standardised_species.RData"))
+# Save filtered data to file
+#save(all_filtered_species, file = here("data", "derived_data", "try_filtered.RData"))
 
 # 5. CHECK CLASSIFICATION OF SPECIES -------------------------------------------
 
@@ -288,9 +115,9 @@ classification <- classification |>
                            "BorealArctic", ClassNew))
 
 # Ensure species names are in the same formats in both dfs
-comparison_results <- corrected_species_list |>
+comparison_results <- all_filtered_species |>
   # select only relevant columns
-  select(SpeciesName, BiomeCategory) |>
+  select(SpeciesName, Biome) |>
   # join with Mariana's df
   left_join(classification |>
               select(SpeciesName = SPECIES_CLEAN, PaperClassification = ClassNew), 
@@ -298,13 +125,13 @@ comparison_results <- corrected_species_list |>
   # create a match indicator for species that are in both datasets
   mutate(FoundInBoth = !is.na(PaperClassification),
          ClassificationMatch = case_when(is.na(PaperClassification) ~ NA,
-                                         BiomeCategory == PaperClassification ~ TRUE,
+                                         Biome == PaperClassification ~ TRUE,
                                          TRUE ~ FALSE))
 
 # Extract list of discrepancies
 discrepancies <- comparison_results |>
   filter(FoundInBoth & !ClassificationMatch) |>
-  select(SpeciesName, MyClassification = BiomeCategory, PaperClassification)
+  select(SpeciesName, MyClassification = Biome, PaperClassification)
 
 # 6. PLOT MAP WITH BIOME AND DATAPOITNS ----------------------------------------
 
