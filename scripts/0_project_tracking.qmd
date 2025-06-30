@@ -1,32 +1,11 @@
 ---
 title: "Tundra & Boreal Plant Species Trait Spaces"
 format: 
-  pdf:
-    documentclass: scrartcl
-    classoption: 
-      - DIV=11
-      - numbers=noendperiod
-    papersize: letter
-    geometry: margin=1in
-    fig-width: 7
-    fig-height: 5
-    fig-pos: 'H'
-    tbl-cap-location: top
-    header-includes: |
-      \usepackage{booktabs}
-      \usepackage{longtable}
-      \usepackage{array}
-      \usepackage{multirow}
-      \usepackage{wrapfig}
-      \usepackage{float}
-      \usepackage{colortbl}
-      \usepackage{pdflscape}
-      \usepackage{tabu}
-      \usepackage{threeparttable}
-      \usepackage{threeparttablex}
-      \usepackage{makecell}
-      \usepackage{xcolor}
-      \KOMAoption{captions}{tableheading}
+  html:
+    theme: flatly
+    toc: true
+    toc-location: left
+    css: custom.css
 editor: visual
 ---
 
@@ -40,10 +19,13 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 
 ## File Structure
 
-| Name | Function |
-|----|----|
-| 0_setup.R | Load all necessary packages and functions |
-| 1.1_TRY_filtering.R | Filter TRY records to only include those in the boreal and tundra biomes |
+| Name                                      | Function                                                                 |
+|------------------------------------|------------------------------------|
+| 0_setup.R                                 | Load all necessary packages and functions                                |
+| 1.1_TRY_filtering.R                       | Filter TRY records to only include those in the boreal and tundra biomes |
+| 1.2_TRY_species_list.R                    | Clean the species list extracted from TRY                                |
+| 2.1_GBIF_biome_boundary_distance.R        | Calculate distances to biome boundaries for each species                 |
+| 3.1_exploration_biome_boundary_distance.R | Explore & validate output of script 2.1                                  |
 
 ```{r packages}
 #| label: packages
@@ -52,29 +34,18 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 library(here)
 source(here("scripts", "0_setup.R"))
 source(here("scripts", "1.1_TRY_filtering.R"))
+source(here("scripts", "1.2_TRY_species_list.R"))
+source(here("scripts", "3.1_exploration_biome_boundary_distance.R"))
 ```
 
-# 1.1_TRY_filtering
+# Filtering TRY Records (1.1)
 
 This script filtered out TRY records which fall outside the boundaries of the boreal forest and tundra biomes.
 
-## Filtering Results
-
-```{r filtering summary}
-#| label: filtering-summary
-#| echo: false
-#| message: false
-#| warning: false
-
-cat("Original TRY data points:", nrow(try_raw), "\n") # Original TRY data points: 130 213 
-cat("Points in Boreal biome:", nrow(boreal_try_data), "\n") # Points in Boreal biome: 20 594
-cat("Points in Tundra biome:", nrow(tundra_try_data), "\n") # Points in Tundra biome: 42 500
-cat("Total filtered points:", nrow(try_filtered), "\n") # Total filtered points: 63 094 
-
-```
+The raw TRY file contained `r nrow(try_raw)` , of which `r nrow(boreal_try_data)` were in the Boreal biome and `r nrow(tundra_try_data)` in the Tundra biome. After filtering out points falling outside of either biome, `r nrow(try_filtered)` points were left.
 
 ```{r points in biomes}
-#| label: points-in-biomes
+#| label: fig-points-in-biomes
 #| fig-cap: "Distribution of TRY datapoints across the Boreal and Tundra WWF biomes"
 #| fig-width: 7
 #| fig-height: 6
@@ -133,194 +104,242 @@ ggplot() +
          color = guide_legend(title = "Records"))
 ```
 
-## Species Lists
+# Species List from TRY (1.2)
 
-```{r species lists}
-#| label: species-lists
+The filtered `r nrow(try_filtered)` points identified `r nrow(all_filtered_species)` different species. This list underwent the following cleaning steps, based on the "SpeciesName" column:
+
+1.  Removed `r sum(grepl("\\bsp\\.$|\\bsp\\b", all_filtered_species$SpeciesName))` records with .sp endings
+2.  Removed `r sum(all_filtered_species$SpeciesName %in% c("Grass", "Fern", "Unknown"))` records names "Grass", "Fern" or "Unknown"
+3.  Removed `r sum(all_filtered_species$SpeciesName %in% c("Hieracium sect."))` record named "Hieracium sect."
+4.  Removed `r sum(!grepl("\\s", all_filtered_species$SpeciesName) & nchar(all_filtered_species$SpeciesName) > 2)` records with single word names
+5.  Corrected a record named "Eri schi" to *Eriophorum scheuchzeri*
+
+After these cleaning steps, `r nrow(all_filtered_species) - nrow(filtered_species_list_1)` records had been removed, leaving us with `r nrow(filtered_species_list_1)` records.
+
+6.  Records of subspecies, varieties or sections were standardised to species level. In total `r nrow(subspecies_varieties)` subspecies, `r varieties_count` varieties and `r sections_count` sections were standardised to species level. After the removal of duplicate species names created from these cleaning steps, `r nrow(filtered_species_list_2)` unique records were left
+7.  Checked for records with \> 2 words in the SpeciesName and found `r remaining_multi_word` records: `r unique(multi_word_names)` . These records were also standardised to species level.
+8.  Removed 1 record called "*Hieracium*"
+9.  The resulting list of `r nrow(filtered_species_list_5)` was run through a taxonomic checker, which found:
+    -   `r nrow(unmatched)` as unmatched records (due to misspelling in names)
+    -   `r nrow(fuzzy_matches)` fuzzy matches
+    -   After unmatched and fuzzy records were handled and produced duplicate records were removed, the final list of species contained `r nrow(corrected_species_list)` unique species.
+
+## Fuzzy matches check
+
+The records with fuzzy matches were handled as follows:
+
+```{r fuzzy-matches-table}
+#| label: fuzzy-matches-table
+#| tbl-cap: "Species with fuzzy matches requiring manual review"
 #| echo: false
 #| message: false
 #| warning: false
 
-cat("Total number of species:", length(unique(all_filtered_species$SpeciesName)), "\n") # 800
-cat("Boreal species:", length(boreal_species), "\n") # 518
-cat("Tundra species:", length(tundra_species), "\n") # 449
-cat("Species found in both biomes:", length(common_species), "\n") # 167
-cat("Species unique to Boreal:", length(unique_boreal_species), "\n") # 351
-cat("Species unique to Tundra:", length(unique_tundra_species), "\n") # 282
+# Create table with notes
+fuzzy_table <- fuzzy_review |>
+  mutate(Manual_Notes = case_when(
+    Original == "Spirodela polyrrhiza" ~ "Spelling correction to Spirodela polyrhiza",
+    Original == "Trichophorum caespitosum" ~ "Also found a species called T. cepitosum but may be entirely different species. Leave it up to GBIF taxon match and check after.", 
+    Original == "Salix doniana" ~ "Most likely 'Salix purpurea x doniana', standardised to 'Salix purpurea' ",
+    Original == "Silene samojedora" ~ "Spelling correction to matched name (Silene samojedorum)",
+    Original == "Arctostaphylos alpinus" ~ "Leave it up to GBIF taxon match and check after",
+    Original == "Salix myrtifolia" ~ "Spelling correction to Salix myrtillifolia",
+    Original == "Nuphar spenneriana" ~ "Leave it up to GBIF taxon match and check after",
+    Original == "Calamagrostis purpuras" ~ "Spelling correction to Calamagrostis purpurea",
+    Original == "Silene arctica" ~ "Confusion over many possibilities, leave it up to GBIF",
+    Original == "Pedicularis vertisilata" ~ "Spelling correction to Pedicularis verticillata",
+    Original == "Peticites frigidus" ~ "Spelling correction to Petasites frigidus",
+    Original == "Senecio atropurpuris" ~ "Spelling correction to Senecio atropurpureus",
+    Original == "Gentia glauca" ~ "Spelling correction to Gentiana glauca",
+    Original == "Loiselura procumbens" ~ "Fuzzy match possibly correct, leave it up to GBIF",
+    Original == "Polemonium acutifolium" ~ "Spelling correction to Polemonium acutiflorum",
+    Original == "Rumex lapponum" ~ "Spelling correction to Rumex lapponicus",
+    Original == "Pedicularis vertillis" ~ "Spelling correction to Pedicularis verticillata",
+    Original == "Sabulina rossii" ~ "Spelling correction to Sabulina rosei",
+    Original == "Echinops crispus" ~ "Changed to synonym Echinops ritro",
+    Original == "Cherleria biflora" ~ "Original name is correct",
+    Original == "Salix fuscenses" ~ "Spelling correction to Salix fuscescens",
+    Original == "Draba bila" ~ "Leave it up to GBIF",
+    Original == "Salix laponicum" ~ "Spelling correction to Salix lapponum",
+    Original == "Cherleria obtusiloba" ~ "Original name correct",
+    Original == "Senecio atropupuris" ~ "Spelling correction to Senecio atropurpureus",
+    Original == "Salix argyocarpon" ~ "Spelling correction to Salix argyrocarpa",
+    Original == "Salix herbaceae-polaris" ~ "Standardised to species level Salix herbacea")) |>
+  mutate(Color_Cat = case_when(str_detect(Manual_Notes, "Spelling correction") ~ "Spelling",
+                               str_detect(Manual_Notes, "Original name") ~ "Original",
+                               str_detect(Manual_Notes, "GBIF") ~ "GBIF",
+                               str_detect(Manual_Notes, "Standardised") ~ "Standard",
+                               .default = "Other")) |>
+  select(`Original Name` = Original, 
+         `Matched Name` = Matched, 
+         `Notes` = Manual_Notes,
+         Color_Cat)
+
+# Create interactive table
+DT::datatable(fuzzy_table,
+  options = list(pageLength = 10,
+                 lengthMenu = c(10, 25, 50, -1),
+                 scrollX = TRUE,
+                 dom = 'Bfrtip',
+                 buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+                 columnDefs = list(list(width = '200px', targets = 0),
+                                   list(width = '200px', targets = 1),
+                                   list(width = '300px', targets = 2),
+                                   list(visible = FALSE, targets = 3))),
+  extensions = 'Buttons',
+  filter = 'top',
+  rownames = FALSE,
+  class = 'cell-border stripe hover') |>
+  DT::formatStyle(columns = c('Original Name', 'Matched Name'),
+                  fontStyle = 'italic') |>
+  DT::formatStyle('Original Name','Color_Cat',
+                  backgroundColor = styleEqual(c("Spelling", "Original", "GBIF", "Standard"),
+                                               c("lightblue", "lightgreen", "lightpink", "plum")))
 ```
 
-### Species List Cleaning: 1. Removing morphospecies
+# Distance to Biome Boundary Calculations (2.1.)
 
-From the original species list, 30 records contained morphospecies. Therefore, the following records were removed from our species list.
+To calculate the distance to biome boundary for each species in the cleaned species list, the following methods were attempted:
 
-```{r morphospecies-list-table}
-#| label: morphospecies-list-table
-#| tbl-cap: Morphospecies removed from species list
+1.  Use occ_download() for the entire species list at once - crashed Franklin ❌
+2.  Use occ_search() with maximum number of occurrences (200 000) ❌
+    -   7 species were processed in \~7 hours =\> the whole species list would be processed in about a month
+3.  Use occ_count() to count the number of occurrences for each species within a raster grid and calculate distances to boundaries from the cell centroids ❌
+    -   After the 50th cell processed, I would get the message "This is not an efficient way to retrieve this data, please slow down or stop your script. Check the API documentation for a more efficient way..."
+4.  Process the species list using occ_download() 50 species at a time 🥳
+    -   This approach worked and produced the below classification of the species
+
+```{r biome boundary table}
+#| label: biome-boundary-table
+#| tbl-cap: "Distances to biome boundaries for final species list from TRY"
 #| echo: false
 #| message: false
 #| warning: false
 
-removed_species |>
-  kable(format = "latex", booktabs = TRUE,
-        longtable = TRUE) |>
-  kable_styling(latex_options = c("striped", "repeat_header"),
-                font_size = 9,
-                full_width = FALSE) |>
-  column_spec(1, italic = TRUE) |>
-  collapse_rows(columns = 2, latex_hline = "major", valign = "middle")
+# Display interactive table
+interactive_table
+```
+
+The mean distance to biome boundary is distributed as follows:
+
+```{r biome distance histogram}
+#| label: fig-distance-histogram
+#| fig-cap: "Distribution of mean distances to biome boundaries for all species"
+#| fig-width: 8
+#| fig-height: 5
+#| echo: false
+#| message: false
+#| warning: false
+
+# Calculate summary statistics
+mean_dist <- mean(detailed_results$mean_distance_km, na.rm = TRUE)
+median_dist <- median(detailed_results$mean_distance_km, na.rm = TRUE)
+
+# Create histogram with annotations
+ggplot(detailed_results, aes(x = mean_distance_km)) +
+  geom_histogram(bins = 40, fill = "steelblue", alpha = 0.7, color = "white") +
+  geom_vline(aes(xintercept = mean_dist), color = "red", linetype = "dashed", size = 1) +
+  geom_vline(aes(xintercept = median_dist), color = "orange", linetype = "dashed", size = 1) +
+  annotate("text", x = mean_dist + 50, y = Inf, 
+           label = paste("Mean:", round(mean_dist, 1), "km"), 
+           vjust = 2, color = "red", size = 3.5) +
+  annotate("text", x = median_dist - 50, y = Inf, 
+           label = paste("Median:", round(median_dist, 1), "km"), 
+           vjust = 2, color = "orange", size = 3.5) +
+  labs(x = "Mean Distance (km)",
+       y = "Number of Species") +
+  theme_classic() +
+  theme(axis.title = element_text(size = 11),
+        panel.grid.minor = element_blank()) +
+  scale_x_continuous(labels = scales::comma_format()) +
+  scale_y_continuous(labels = scales::comma_format())
 
 ```
 
-### Species List Cleaning: 2. Standardise subspecies & varieties to species level
+The GBIF taxon key mapping of species was saved in species
 
-In total, 22 records in the species list are subspecies or varieties.
-
-```{r subspecies-list-table}
-#| label: subspecies-list-table
-#| tbl-cap: Subspecies standardised in species list
+```{r taxon mapping summary}
+#| label: fig-taxon-mapping-summary
+#| fig-cap: "GBIF Taxonomic Matching Results"
 #| echo: false
 #| message: false
 #| warning: false
 
-subspecies_varieties |>
-  kable(format = "latex", booktabs = TRUE,
-        longtable = TRUE) |>
-  kable_styling(latex_options = c("striped", "repeat_header"),
-                font_size = 9,
-                full_width = FALSE) |>
-  column_spec(1, italic = TRUE) |>
-  collapse_rows(columns = 2, latex_hline = "major", valign = "middle")
+# Load taxon key mapping data
+taxon_key_mapping <- readRDS(here("data", "derived_data", "species_taxon_key_mapping_final_June28.rds"))
 
+# Calculate summary statistics
+total_species <- nrow(taxon_key_mapping)
+successful_matches <- sum(!is.na(taxon_key_mapping$usageKey), na.rm = TRUE)
+failed_matches <- sum(is.na(taxon_key_mapping$usageKey), na.rm = TRUE)
+success_rate <- round((successful_matches / total_species) * 100, 1)
+
+
+# Create visualization of match types
+match_summary <- taxon_key_mapping |>
+  count(match_type, name = "count") |>
+  mutate(percentage = round((count / sum(count)) * 100, 1),
+         label = paste0(match_type, "\n(", count, " - ", percentage, "%)"))
+
+ggplot(match_summary, aes(x = reorder(match_type, count), y = count, fill = match_type)) +
+  geom_col(alpha = 0.8, color = "white") +
+  geom_text(aes(label = paste0(count, "\n(", percentage, "%)")), 
+            vjust = -0.5, size = 3.5, fontface = "bold") +
+  labs(x = "Match Type",
+       y = "Number of Species") +
+  theme_classic() +
+  theme(axis.title = element_text(size = 11),
+        legend.position = "none",
+        panel.grid.minor = element_blank()) +
+  scale_fill_manual(values = c("EXACT" = "steelblue",
+                               "FUZZY" = "orange", 
+                               "HIGHERRANK" = "lightgreen",
+                               "NONE" = "lightcoral")) +
+  scale_y_continuous(expand = expansion(mult = c(0, 0.1)))
 ```
 
-### Species List Cleaning 3: Cross-reference classification
+The breakdown of the match types revealed that there were 17 higher rank, 1 fuzzy and 2 records with no match at all.
 
-The classification of records created here was compared to the categorisation of species in another paper. The categories were standardised to: "Boreal specialist", "Arctic specialist" and "BorealArctic" for ease of comparison.
-
-The following 127 species were found to differ in classification between the two:
-
-```{r mismatched-classification}
-#| label: mismatched-classification
-#| tbl-cap: List of Species Differing in Classification
+```{r uncertain matches}
+#| label: uncertain-matches-table
+#| tbl-cap: "Species with fuzzy, no matches, or higher rank matches in GBIF"
 #| echo: false
 #| message: false
 #| warning: false
 
-# Get list of species with discrepancies
-discrepancies <- comparison_results |>
-  filter(FoundInBoth & !ClassificationMatch) |>
-  select(SpeciesName, MyClassification = BiomeCategory, PaperClassification)
+# Get all problematic species (fuzzy, none, and higher rank)
+problematic_species <- taxon_key_mapping |>
+  filter(match_type %in% c("FUZZY", "NONE", "HIGHERRANK")) |>
+  select(`Species Name` = species,
+         `Match Type` = match_type,
+         `Confidence` = confidence,
+         `Status` = match_status) |>
+  arrange(`Match Type`, `Species Name`)
 
-# Count records for each species in each biome from try_filtered dataset
-species_record_counts <- try_filtered |>
-  group_by(AccSpeciesName, biome) |>
-  summarize(record_count = n(), .groups = "drop") |>
-  pivot_wider(names_from = biome, values_from = record_count, values_fill = list(record_count = 0)) |>
-  mutate(total_records = boreal + tundra)
-
-# Merge the discrepancies with record counts
-discrepancy_table <- discrepancies |>
-  left_join(species_record_counts, by = c("SpeciesName" = "AccSpeciesName")) |>
-  # reorder columns
-  select(SpeciesName, MyClassification, PaperClassification, boreal, tundra, total_records)
-
-# Sort by number of records
-discrepancy_table <- discrepancy_table |>
-  arrange(desc(total_records))
-
-# Create table
-discrepancy_table |>
-  kable(format = "latex", booktabs = TRUE,
-        longtable = TRUE) |>
-  kable_styling(latex_options = c("striped", "repeat_header"),
-                font_size = 9,
-                full_width = FALSE) |>
-  column_spec(1, italic = TRUE) |>
-  collapse_rows(columns = 2, latex_hline = "major", valign = "middle")
-```
-
-Mapped, the distribution of discrepant species is as follows:
-
-```{r discrepant-points-in-biomes}
-#| label: discrepant-points-in-biomes
-#| fig-cap: "Distribution of species with differing classifications across biomes"
-#| fig-width: 7
-#| fig-height: 6
-#| out-width: "100%"
-#| echo: false
-#| message: false
-#| warning: false
-
-# Extract the list of discrepant species
-disputed_species_list <- discrepancies$SpeciesName
-
-# Filter the TRY data for just these species
-disputed_records <- try_filtered |>
-  filter(AccSpeciesName %in% disputed_species_list)
-
-# Convert to sf object with the right projection
-disputed_sf <- st_as_sf(disputed_records, 
-                        coords = c("LON_site", "LAT_site"), 
-                        crs = 4326) |>
-  st_transform(crs = proj_choice)
-
-# Plot map
-ggplot() +
-  geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA, alpha = 0.3) +
-  scale_fill_manual(values = c("forestgreen", "skyblue"),
-                    labels = c("Boreal forest", "Arctic tundra"),
-                    name = "Biome") +
-  geom_sf(data = world_polar, fill = NA, color = "darkgray", size = 0.2) +
-  geom_sf(data = disputed_sf, color = "red", size = 1.5, alpha = 0.5) +
-  coord_sf(crs = proj_choice, 
-           ylim = c(-703086, 7071423), 
-           xlim = c(-505347.4, 8526158),
-           expand = FALSE,
-           clip = "on") +
-  theme_bw() +
-  theme(axis.text.x = element_blank(),
-        axis.text.y = element_blank(),
-        legend.position = c(0.2, 0.9),
-        plot.title = element_text(face = "bold"),
-        panel.grid.major = element_line(color = "gray90", linetype = "dashed"),
-        panel.grid.minor = element_blank())
-```
-
-# Final Species List
-
-After the removal of morphospecies and standardisation of subspecies and varieties to species level, the following list of species were used:
-
-```{r species-list-table}
-#| label: species-list-table
-#| tbl-cap: Species List in Each Biome
-#| echo: false
-#| message: false
-#| warning: false
-
-# Create table of species
-species_table <- standardised_species_list |>
-  # Create a new biome column with three categories for sorting
-  mutate(BiomeCategory = case_when(
-    SharedAcrossBiomes ~ "Boreal & Tundra",
-    Biome == "Boreal" ~ "Boreal only",
-    Biome == "Tundra" ~ "Tundra only")) |>
-  # Set a specific order for biome categories
-  mutate(BiomeOrder = factor(BiomeCategory, 
-                           levels = c("Boreal only", "Tundra only", "Boreal & Tundra"))) |> 
-  # Sort first by biome order, then alphabetically by species name
-  arrange(BiomeOrder, SpeciesName) |>
-  # Select and rename final columns
-  select(SpeciesName, BiomeCategory) |>
-  rename("Species Name" = SpeciesName,
-         "Biome" = BiomeCategory)
-
-# Print table
-species_table |>
-  kable(format = "latex", booktabs = TRUE,
-        longtable = TRUE) |>
-  kable_styling(latex_options = c("striped", "repeat_header"),
-                font_size = 9,
-                full_width = FALSE) |>
-  column_spec(1, italic = TRUE) |>
-  collapse_rows(columns = 2, latex_hline = "major", valign = "middle")
+# Create interactive table
+DT::datatable(problematic_species,
+    options = list(pageLength = 10,
+                   lengthMenu = c(10, 25, 50, -1),
+                   scrollX = TRUE,
+                   dom = 'Bfrtip',
+                   buttons = c('copy', 'csv', 'excel'),
+                   columnDefs = list(list(width = '200px', targets = 0),
+                                     list(width = '120px', targets = 1),
+                                     list(width = '200px', targets = 2),
+                                     list(width = '100px', targets = 3))),
+    extensions = 'Buttons',
+    filter = 'top',
+    rownames = FALSE,
+    class = 'cell-border stripe hover') |>
+    # make species names italic
+    DT::formatStyle(columns = c('Species Name', 'Match Type'),
+                    fontStyle = 'italic') |>
+    # color code by match type
+    DT::formatStyle('Match Type',
+                    backgroundColor = styleEqual(c("FUZZY", "NONE", "HIGHERRANK"),
+                                                 c("lightyellow", "lightcoral", "lightblue"))) |>
+    # color code confidence levels
+    DT::formatStyle('Confidence',
+                    backgroundColor = styleInterval(cuts = c(95, 98),
+                                                    values = c("lightcoral", "lightyellow", "lightgreen")))
 ```
