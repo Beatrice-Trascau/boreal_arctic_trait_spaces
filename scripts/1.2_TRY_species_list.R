@@ -218,8 +218,8 @@ filtered_species_list_5 <- filtered_species_list_4 |>
   filter(SpeciesName != "Hieracium")
 
 # Save cleaned species list
-save(filtered_species_list_5, 
-     file = here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
+# save(filtered_species_list_5, 
+#      file = here("data", "derived_data", "cleaned_species_list_26June2025.RData"))
 
 # 3. TAXON CHECK ---------------------------------------------------------------
 
@@ -236,24 +236,28 @@ empty <- filtered_species_list_5 |>
   filter(SpeciesName == " ") # no empty cells
 
 # Load WFO data
-library(WorldFlora)
-WFO.remember('data/WFO_Backbone/classification.csv')
+# library(WorldFlora)
+# WFO.remember('data/WFO_Backbone/classification.csv')
 
 # Create dataframe with unique species names only
 sp_names_only <- filtered_species_list_5 |>
   distinct(SpeciesName) # 753 records 
 
 # Run taxon check
-taxon_check <- WFO.match(spec.data = sp_names_only,
-                         spec.name = "SpeciesName",
-                         WFO.file = 'data/WFO_Backbone/classification.csv',
-                         no.dates = TRUE)
+# taxon_check <- WFO.match(spec.data = sp_names_only,
+#                          spec.name = "SpeciesName",
+#                          WFO.file = 'data/WFO_Backbone/classification.csv',
+#                          no.dates = TRUE)
 
 # Save taxon check to file
-write.csv(taxon_check, here("data", "derived_data",
-                            "WFO_taxon_check_26June2025.csv"))
+# write.csv(taxon_check, here("data", "derived_data",
+#                             "WFO_taxon_check_26June2025.csv"))
 
 ## 3.2. Check record count mismatch --------------------------------------------
+
+# Load taxon check
+taxon_check <- read.csv(here("data", "derived_data",
+                             "WFO_taxon_check_26June2025.csv"))
 
 # Spp list = 752 but taxon_check = 1072
 
@@ -342,7 +346,7 @@ fuzzy_review <- fuzzy_matches |>
   select(Original = SpeciesName.ORIG, Matched = scientificName, 
          Distance = Fuzzy.dist, Status = taxonomicStatus) |>
   arrange(Distance)
-View(fuzzy_review)
+# View(fuzzy_review)
 
 # Manual fix for fuzzy matches
 corrected_species_list_2 <- corrected_species_list_1 |>
@@ -381,7 +385,7 @@ corrected_species_list <- corrected_species_list_2 |>
   distinct(SpeciesName, .keep_all = TRUE) # 739 species
 
 # Write corrected species list to file
-save(corrected_species_list, file = here("data", "derived_data", 
-                                         "corrected_species_list_27June2025.RData"))
+# save(corrected_species_list, file = here("data", "derived_data", 
+#                                          "corrected_species_list_27June2025.RData"))
 
 # END OF SCRIPT ----------------------------------------------------------------  
