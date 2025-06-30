@@ -126,6 +126,6 @@ interactive_table <- datatable(detailed_results,
 
 
 # Display the table
-interactive_table
+#interactive_table
 
 # END OF SCRIPT ----------------------------------------------------------------
