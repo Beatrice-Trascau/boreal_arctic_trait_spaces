@@ -106,7 +106,7 @@ ggplot() +
 
 # Species List from TRY (1.2)
 
-The filtered `r nrow(try_filtered)` points identified `r nrow(all_filtered_species)` different species. This list underwent the following cleaning steps, based on the "SpeciesName" column:
+The filtered `r nrow(try_filtered)` points identified **`r nrow(all_filtered_species)`** different species. This list underwent the following cleaning steps, based on the "SpeciesName" column:
 
 1.  Removed `r sum(grepl("\\bsp\\.$|\\bsp\\b", all_filtered_species$SpeciesName))` records with .sp endings
 2.  Removed `r sum(all_filtered_species$SpeciesName %in% c("Grass", "Fern", "Unknown"))` records names "Grass", "Fern" or "Unknown"
@@ -114,15 +114,15 @@ The filtered `r nrow(try_filtered)` points identified `r nrow(all_filtered_speci
 4.  Removed `r sum(!grepl("\\s", all_filtered_species$SpeciesName) & nchar(all_filtered_species$SpeciesName) > 2)` records with single word names
 5.  Corrected a record named "Eri schi" to *Eriophorum scheuchzeri*
 
-After these cleaning steps, `r nrow(all_filtered_species) - nrow(filtered_species_list_1)` records had been removed, leaving us with `r nrow(filtered_species_list_1)` records.
+After these cleaning steps, `r nrow(all_filtered_species) - nrow(filtered_species_list_1)` records had been removed, leaving us with **`r nrow(filtered_species_list_1)`** records.
 
-6.  Records of subspecies, varieties or sections were standardised to species level. In total `r nrow(subspecies_varieties)` subspecies, `r varieties_count` varieties and `r sections_count` sections were standardised to species level. After the removal of duplicate species names created from these cleaning steps, `r nrow(filtered_species_list_2)` unique records were left
+6.  Records of subspecies, varieties or sections were standardised to species level. In total `r nrow(subspecies_varieties)` subspecies, `r varieties_count` varieties and `r sections_count` sections were standardised to species level. After the removal of duplicate species names created from these cleaning steps, **`r nrow(filtered_species_list_2)`** unique records were left
 7.  Checked for records with \> 2 words in the SpeciesName and found `r remaining_multi_word` records: `r unique(multi_word_names)` . These records were also standardised to species level.
 8.  Removed 1 record called "*Hieracium*"
-9.  The resulting list of `r nrow(filtered_species_list_5)` was run through a taxonomic checker, which found:
+9.  The resulting list of **`r nrow(filtered_species_list_5)`** was run through a taxonomic checker, which found:
     -   `r nrow(unmatched)` as unmatched records (due to misspelling in names)
     -   `r nrow(fuzzy_matches)` fuzzy matches
-    -   After unmatched and fuzzy records were handled and produced duplicate records were removed, the final list of species contained `r nrow(corrected_species_list)` unique species.
+    -   After unmatched and fuzzy records were handled and produced duplicate records were removed, the final list of species contained **`r nrow(corrected_species_list)`** unique species.
 
 ## Fuzzy matches check
 
