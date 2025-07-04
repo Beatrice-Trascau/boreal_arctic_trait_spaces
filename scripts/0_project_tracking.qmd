@@ -17,10 +17,19 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 2.  Which traits drive most of the variation between categories?
 3.  Which traits are more relevant in defining 'borealness' across functional groups?
 
+# Hypothesis
+
+1.  Boreal and arctic plant species will significantly differ in trait spaces. Size-related functional traits (height, leaf area) will be major drivers of the differences between the two trait spaces, with boreal species contributing greater values to size-related functional traits than tundra specialists.
+2.  Across functional groups and within the limits of available data, the traits more relevant in defining the "borealness" of a species, when compared to arctic species, will be:
+    -   Higher size-related traits: plant height & seed mass
+    -   Lower SLA (Gong et al. 2019)
+    -   Leaf N content
+    -   Leaf C:N ratio
+
 ## File Structure
 
 | Name                                      | Function                                                                 |
-|------------------------------------|------------------------------------|
+|-------------------------------------------|--------------------------------------------------------------------------|
 | 0_setup.R                                 | Load all necessary packages and functions                                |
 | 1.1_TRY_filtering.R                       | Filter TRY records to only include those in the boreal and tundra biomes |
 | 1.2_TRY_species_list.R                    | Clean the species list extracted from TRY                                |
@@ -343,3 +352,7 @@ DT::datatable(problematic_species,
                     backgroundColor = styleInterval(cuts = c(95, 98),
                                                     values = c("lightcoral", "lightyellow", "lightgreen")))
 ```
+
+With the exception of *R. stephanii, A. alpinus, D. bila, E. canadensis, H. oreades* and *S. arctica*, all species in the table above have their synonym in the pipeline output (i.e. they have been processed correctly and are represented in the data). In the case of *L. procumbens*, the correct name is *Kalmia procumbens*, which was also corrected by the GBIF backbone and included in the pipeline output. *R. stephanii* was processed by the pipeline under the name *R. stephani*. In the case of *A. alpinus* and *H. oreades,* there are occurrences available in GBIF but they and their synonyms are not present in the pipeline output. *D. bila* and *S. arctica* remain a mystery.
+
+As for the species listed above (*A. alpinus, D. bila, H. oreades* and *S. arctica*), they will be processed through the pipeline again and output will be monitored more closely, in order to understand what the GBIF backbone is matching them to. *Elodea canadensis* represents a wetland species and will therefore be removed from the our list - no need to reprocess it.
