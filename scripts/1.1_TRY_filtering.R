@@ -74,7 +74,7 @@ boreal_try_data$biome <- "boreal"
 tundra_try_data$biome <- "tundra"
 
 # Combine the two
-try_filtered <- rbind(boreal_try_data, tundra_try_data)
+try_filtered_all_data_27July2025 <- rbind(boreal_try_data, tundra_try_data)
 
 # 4. CREATE SPECIES LIST -------------------------------------------------------
 
@@ -99,6 +99,7 @@ all_filtered_species <- data.frame(SpeciesName = c(boreal_species, setdiff(tundr
 
 
 # Save filtered data to file
+#save(try_filtered_all_data_27July2025, file = here("data", "derived_data", "try_filtered_all_data_27July2025.RData"))
 #save(all_filtered_species, file = here("data", "derived_data", "try_filtered.RData"))
 
 # 5. CHECK CLASSIFICATION OF SPECIES -------------------------------------------
