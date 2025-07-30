@@ -1,6 +1,6 @@
 ##----------------------------------------------------------------------------##
 # PAPER 3: BOREAL AND ARCTIC PLANT SPECIES TRAIT SPACES 
-# 1.1_TRY_species_list
+# 1.2_TRY_species_list
 # This script contains code which prepares the species list for the distance to
 # biome boundary calculation
 ##----------------------------------------------------------------------------##
@@ -248,10 +248,6 @@ sp_names_only <- filtered_species_list_5 |>
 #                          spec.name = "SpeciesName",
 #                          WFO.file = 'data/WFO_Backbone/classification.csv',
 #                          no.dates = TRUE)
-
-# Save taxon check to file
-# write.csv(taxon_check, here("data", "derived_data",
-#                             "WFO_taxon_check_26June2025.csv"))
 
 # Save taxon check to file
 # write.csv(taxon_check, here("data", "derived_data",
