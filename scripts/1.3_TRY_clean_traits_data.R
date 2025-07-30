@@ -151,7 +151,7 @@ filtered_traits_4 <- filtered_traits_3 |>
 
 # This is done in accordance with the taxonomic check from script 1.2 which was
 # run on the list of species from this dataframe
-traits_cleaned_species_names <- filtered_traits_4 |>
+filtered_traits_5 <- filtered_traits_4 |>
   mutate(StandardSpeciesName = case_when(
     StandardSpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
     StandardSpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
@@ -176,8 +176,99 @@ traits_cleaned_species_names <- filtered_traits_4 |>
     StandardSpeciesName == "Salix herbaceae-polaris" ~ "Salix herbacea",
     .default = StandardSpeciesName))
 
+# 3. CLEAN TRAITS VALUES -------------------------------------------------------
+
+## 3.1. Solve character issue --------------------------------------------------
+
+# Check structure of traits df
+glimpse(filtered_traits_5) # trait values are characters - why?
+
+
+# Find out why the column OrigValueStr was read in as a character
+filtered_traits_5 |>
+  # get the number of rows that have letters = 1015
+  summarise(has_letters = sum(grepl("[a-zA-Z]", OrigValueStr)),
+            # number of rows with ranges = 1012
+            has_ranges = sum(grepl("-", OrigValueStr)),
+            # number of rows with special characters = 1015
+            has_special_characters = sum(grepl("[^0-9.-]", OrigValueStr)),
+            total_rows = n())
+
+# Inspect rows with letters
+rows_with_letters <- filtered_traits_5 |>
+  filter(grepl("[a-zA-Z]", OrigValueStr))
+
+# Inspect rows with ranges
+rows_with_ranges <- filtered_traits_5 |>
+  filter(grepl("-", OrigValueStr))
+
+# Inspect rows with special characters
+rows_with_characters <- filtered_traits_5 |>
+  filter(grepl("[^0-9.-]", OrigValueStr))
+
+# Rows are the same across rows_with_letters, rows_with_ranges, rows_with_characters
+# 2 types of issues: *cm at the end of values and scientific notations
+# remove trailing text after values for the rows with *cm
+# the scientific notations will be converted correctly to numerical by as.numeric()
+filtered_traits_6 <- filtered_traits_5 |>
+  mutate(OrigValueStr = str_remove(OrigValueStr, " cm\\*$"),
+         CleanedTraitValue = as.numeric(OrigValueStr))
+
+## 3.2. Check consistency of units of measurement ------------------------------
+
+# Check if there are any rows where OrigUnitStr and UnitName are different
+mismatched_units <- filtered_traits_6 |>
+  filter(OrigUnitStr != UnitName) |>
+  select(StandardSpeciesName, TraitName, OrigValueStr, OrigUnitStr,
+         UnitName, CleanedTraitValue, Dataset)
+
+# Create an interactive table to check mismatches 
+unit_explorer_table <- datatable(
+  mismatched_units,
+  
+  # Basic options
+  options = list(pageLength = 25,
+                 scrollX = TRUE,
+                 scrollY = "500px",
+                 dom = 'Bfrtip',
+                 buttons = c('copy', 'csv', 'excel'),
+                 search = list(regex = TRUE, caseInsensitive = TRUE),
+    
+    # Column definitions for better formatting
+    columnDefs = list(list(width = '150px', targets = c(0, 1)),  # Species and Trait names
+      list(width = '100px', targets = c(2, 3, 4, 5)),  # Value columns
+      list(width = '200px', targets = c(6)),  # Dataset and 
+      list(className = 'dt-center', targets = c(2, 3, 4, 5)))),  # Center align values
+   
+  # Add filter widgets
+  filter = 'top',
+  
+  # Extensions for additional functionality
+  extensions = 'Buttons',
+  
+  # Column names
+  colnames = c('Species' = 'StandardSpeciesName',
+               'Trait' = 'TraitName', 
+               'Original Value' = 'OrigValueStr',
+               'Original Unit' = 'OrigUnitStr',
+               'Standard Unit' = 'UnitName',
+               'Cleaned Value' = 'CleanedTraitValue',
+               'Dataset' = 'Dataset')) |>
+  
+  # Format specific columns with colors
+  formatStyle('Original Unit', backgroundColor = '#ffebee',
+              fontWeight = 'bold', color = '#c62828') |>
+  
+  formatStyle('Standard Unit', backgroundColor = '#e8f5e8',
+              fontWeight = 'bold', color = '#2e7d32')
+
+# Display the table
+unit_explorer_table
+
+# Check what to filter for
+unique(mismatched_units$OrigUnitStr)
+
 # Save cleaned traits dataframe
 save(traits_cleaned_species_names, file = here("data", "derived_data",
                                                "TRY_traits_cleaned_species_names.RData"))
-
 # END OF SCRIPT ----------------------------------------------------------------
