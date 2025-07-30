@@ -34,15 +34,14 @@ sapply(package_vec, install_load_package)
 # Function to create the file structure needed to run the analysis smoothly
 create_project_structure <- function(base_path = "boreal_arctic_trait_space") {
   # Define the directory structure
-  dirs <- c(
-    file.path(base_path),
-    file.path(base_path, "data"),
-    file.path(base_path, "scripts"),
-    file.path(base_path, "figure"),
-    file.path(base_path, "data", "raw_data"),
-    file.path(base_path, "data", "derived_data"),
-    file.path(base_path, "data", "raw_data", "biomes")
-  )
+  dirs <- c(file.path(base_path),
+            file.path(base_path, "data"),
+            file.path(base_path, "scripts"),
+            file.path(base_path, "figure"),
+            file.path(base_path, "data", "raw_data"),
+            file.path(base_path, "data", "WFO_Backbone"),
+            file.path(base_path, "data", "derived_data"),
+            file.path(base_path, "data", "raw_data", "biomes"))
   
   # Create directories if they don't exist
   for (dir in dirs) {
