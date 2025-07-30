@@ -74,6 +74,7 @@ boreal_try_data$biome <- "boreal"
 tundra_try_data$biome <- "tundra"
 
 # Combine the two
+try_filtered <- rbind(boreal_try_data, tundra_try_data)
 try_filtered_all_data_27July2025 <- rbind(boreal_try_data, tundra_try_data)
 
 # 4. CREATE SPECIES LIST -------------------------------------------------------
