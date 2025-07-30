@@ -236,8 +236,8 @@ empty <- filtered_species_list_5 |>
   filter(SpeciesName == " ") # no empty cells
 
 # Load WFO data
-library(WorldFlora)
-WFO.remember('data/WFO_Backbone/classification.csv')
+# library(WorldFlora)
+# WFO.remember('data/WFO_Backbone/classification.csv')
 
 # Create dataframe with unique species names only
 sp_names_only <- filtered_species_list_5 |>
