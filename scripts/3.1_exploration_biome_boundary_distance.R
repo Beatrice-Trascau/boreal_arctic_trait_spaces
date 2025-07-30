@@ -1,7 +1,7 @@
 ##----------------------------------------------------------------------------##
 # PAPER 3: BOREAL AND ARCTIC PLANT SPECIES TRAIT SPACES 
 # 3.1_exploration_biome_boundary_distance
-# This script contains code which calcualtes the distance to biome boundary for
+# This script contains code which calculates the distance to biome boundary for
 # each species in our list with a third approach
 ##----------------------------------------------------------------------------##
 
