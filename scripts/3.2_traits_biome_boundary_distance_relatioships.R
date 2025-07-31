@@ -31,6 +31,10 @@ traits_biome_boundaries <- cleaned_traits |>
 
 # 2. PLOT RELATIONSHIPS --------------------------------------------------------  
 
+# Calculate universal x-axis limits
+x_min <- min(traits_biome_boundaries$mean_distance_km, na.rm = TRUE)
+x_max <- max(traits_biome_boundaries$mean_distance_km, na.rm = TRUE)
+
 ## 2.1. Filter for each trait --------------------------------------------------
 
 # Filter for plant height
@@ -60,6 +64,7 @@ plant_height_all_data <- ggplot(plant_height, aes(x = mean_distance_km,
                                                   y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Plant height (cm)") +
   theme_classic()
 
@@ -68,6 +73,7 @@ sla_all_data <- ggplot(sla, aes(x = mean_distance_km,
                                 y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = expression("SLA (m"^2*"/kg)")) +
   theme_classic()
 
@@ -76,6 +82,7 @@ seed_mass_all_data <- ggplot(seed_mass, aes(x = mean_distance_km,
                                             y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Seed Mass (mg)") +
   theme_classic()
 
@@ -84,7 +91,8 @@ leaf_N_all_data <- ggplot(leaf_N, aes(x = mean_distance_km,
                                       y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
-  labs(x = "Distance to Biome Boundary (km)", y = "Leaf N (mg/g)") +
+  xlim(x_min, x_max) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = "Leaf N (mg/g)") +
   theme_classic()
 
 # Plot Leaf C:N ratio
@@ -92,7 +100,8 @@ leaf_CN_ratio_all_data <- ggplot(leaf_CN_ratio, aes(x = mean_distance_km,
                                                     y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
-  labs(x = "Distance to Biome Boundary (km)", y = "Leaf C:N Ratio") +
+  xlim(x_min, x_max) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = "Leaf C:N Ratio") +
   theme_classic()
 
 # Combine plots 
@@ -100,7 +109,9 @@ trait_relationships_all_data <- plot_grid(plant_height_all_data, sla_all_data,
                                           seed_mass_all_data, leaf_N_all_data,
                                           leaf_CN_ratio_all_data,
                                           labels = c("a)", "b)", "c)", "d)", "e)"),
-                                          ncols = 2)
+                                          nrow = 3,
+                                          align = "hv",
+                                          axis = "tblr")
 
 ## 2.3. Plot median values per species -----------------------------------------
 
@@ -121,6 +132,7 @@ median_plant_height <- traits_median_df |>
   ggplot(aes(x = mean_distance_km, y = MedianTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Plant height (cm)") +
   theme_classic()
 
@@ -130,6 +142,7 @@ median_sla <- traits_median_df |>
   ggplot(aes(x = mean_distance_km, y = MedianTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = expression("Median SLA (m"^2*"/kg)")) +
   theme_classic()
 
@@ -139,6 +152,7 @@ median_seed_mass <- traits_median_df |>
   ggplot(aes(x = mean_distance_km, y = MedianTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Seed Mass (mg)") +
   theme_classic()
 
@@ -148,6 +162,7 @@ median_leaf_N <- traits_median_df |>
   ggplot(aes(x = mean_distance_km, y = MedianTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Leaf N (mg/g)") +
   theme_classic()
 
@@ -157,6 +172,7 @@ median_c_n <- traits_median_df |>
   ggplot(aes(x = mean_distance_km, y = MedianTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Leaf C:N Ratio") +
   theme_classic()
 
@@ -165,7 +181,9 @@ median_trait_relationships <- plot_grid(median_plant_height, median_sla,
                                         median_seed_mass, median_leaf_N,
                                         median_c_n,
                                         labels = c("a)", "b)", "c)", "d)", "e)"),
-                                        ncols = 2)
+                                        nrow = 3,
+                                        align = "hv",
+                                        axis = "tblr")
 
 ## 2.4. Remove values >= 5 SD --------------------------------------------------
 
@@ -189,6 +207,7 @@ plant_height_plot <- plant_height |>
   ggplot(aes(x = mean_distance_km, y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Plant height (cm)") +
   theme_classic()
 
@@ -198,6 +217,7 @@ sla_plot <- sla |>
   ggplot(aes(x = mean_distance_km, y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = expression("SLA (m"^2*"/kg)")) +
   theme_classic()
 
@@ -207,6 +227,7 @@ seed_mass_plot <- seed_mass |>
   ggplot(aes(x = mean_distance_km, y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Seed Mass (mg)") +
   theme_classic()
 
@@ -216,6 +237,7 @@ leaf_N_plot <- leaf_N |>
   ggplot(aes(x = mean_distance_km, y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Leaf N (mg/g)") +
   theme_classic()
 
@@ -225,14 +247,17 @@ leaf_CN_plot <- leaf_CN_ratio |>
   ggplot(aes(x = mean_distance_km, y = CleanedTraitValue)) +
   geom_point() +
   geom_smooth() +
+  xlim(x_min, x_max) +
   labs(x = "Mean Distance to Biome Boundary (km)", y = "Leaf C:N Ratio") +
   theme_classic()
 
 # Combine plots in one figure
 trait_relationships_plots <- plot_grid(plant_height_plot, sla_plot,
-                                          seed_mass_plot, leaf_N_plot,
-                                          leaf_CN_plot,
-                                          labels = c("a)", "b)", "c)", "d)", "e)"),
-                                          ncols = 2)
+                                       seed_mass_plot, leaf_N_plot,
+                                       leaf_CN_plot,
+                                       labels = c("a)", "b)", "c)", "d)", "e)"),
+                                       nrow = 3,
+                                       align = "hv",
+                                       axis = "tblr")
 
 # END OF SCRIPT ----------------------------------------------------------------
