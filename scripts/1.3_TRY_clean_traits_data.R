@@ -268,7 +268,95 @@ unit_explorer_table
 # Check what to filter for
 unique(mismatched_units$OrigUnitStr)
 
+# 4. CONVERT TRAIT VALUES (IF NEEDED) ------------------------------------------
+
+## 4.1. Plant Height -----------------------------------------------------------
+
+# Filter for plant height
+plant_height <- filtered_traits_6 |>
+  filter(TraitNameNew == "PlantHeight")
+
+# Check how many different measurements are used
+unique(plant_height$OrigUnitStr) # and 4 different measurements for plant height....... (m, cm, meter, mm)
+
+# Convert everything to cm
+filtered_traits_7 <- filtered_traits_6 |>
+  mutate(CleanedTraitValue = case_when(OrigUnitStr %in% c("m", "meter") ~ CleanedTraitValue * 100,
+                                     OrigUnitStr == "cm" ~ CleanedTraitValue,
+                                     OrigUnitStr == "mm" ~ CleanedTraitValue / 10,
+                                     .default = CleanedTraitValue),
+         CleanedTraitUnit = case_when(OrigUnitStr %in% c("mm", "cm", "m", "meter") ~ "cm",
+                                      .default = OrigUnitStr))
+
+## 4.2. SLA --------------------------------------------------------------------
+
+# Filter for SLA
+sla <- filtered_traits_7 |>
+  filter(TraitNameNew == "SLA")
+
+# Check how many different measurements are used
+unique(sla$OrigUnitStr)
+# "mm2/mg", "mm2 mg-1"
+# "g/m2", "g m-2", "gDM m-2"
+# "cm2/g", "cm2 g-1", "SLA cm2/g", "cm^2/g"
+# "m2/kg", "m2 / kg"
+# "m2/g"
+
+# Convert everything to m2/g 
+filtered_traits_8 <- filtered_traits_7 |>
+  mutate(CleanedTraitValue = case_when(OrigUnitStr %in% c("mm2/mg", "mm2 mg-1") ~ CleanedTraitValue,
+                                       OrigUnitStr %in% c("g/m2", "g m-2", "gDM m-2") ~ (1/CleanedTraitValue) * 1000,
+                                       OrigUnitStr %in% c("cm2/g", "cm2 g-1", "SLA cm2/g", "cm^2/g") ~ CleanedTraitValue * 0.1,
+                                       OrigUnitStr %in% c("m2/kg", "m2 / kg") ~ CleanedTraitValue,
+                                       OrigUnitStr %in% c("m2/g") ~ (1/CleanedTraitValue) * 1000,
+                                       .default = CleanedTraitValue),
+         CleanedTraitUnit = case_when(OrigUnitStr %in% c("mm2/mg", "mm2 mg-1", 
+                                                         "g/m2", "g m-2", "gDM m-2", 
+                                                         "cm2/g", "cm2 g-1", "SLA cm2/g", "cm^2/g",
+                                                         "m2/kg", "m2 / kg", "m2/g") ~ "m2/kg",
+                                      .default = OrigUnitStr))
+
+## 4.3. Seed Mass --------------------------------------------------------------
+
+# Filter for Seed Mass
+seed_mass <- filtered_traits_8 |>
+  filter(TraitNameNew == "SeedMass")
+
+# Check how many different measurements are used
+unique(seed_mass$OrigUnitStr) # only mg!!!
+
+## 4.4. Leaf Nitrogen Content --------------------------------------------------
+
+# Filter for Leaf N
+leaf_N <- filtered_traits_8 |>
+  filter(TraitNameNew == "LeafN")
+
+# Check how many different measurements are used
+unique(leaf_N$OrigUnitStr) # Most 2 categories: 1) "%", "percent" 2) "mg N g-1", "mg/g", "mg g-1" 
+
+# Convert everything to mg/g
+filtered_traits_9 <- filtered_traits_8 |>
+  mutate(CleanedTraitValue = case_when(OrigUnitStr %in% c("%", "percent") ~ CleanedTraitValue * 10,
+                                       OrigUnitStr %in% c("mg N g-1", "mg/g", "mg g-1") ~ CleanedTraitValue,
+                                       .default = CleanedTraitValue),
+         CleanedTraitUnit = case_when(OrigUnitStr %in% c("%", "percent", "mg N g-1", "mg/g", "mg g-1") ~ "mg/g",
+                                      .default = OrigUnitStr))
+
+## 4.5. Leaf Nitrogen to Carbon Ratio ------------------------------------------
+
+# Filter for Leaf N
+leaf_NC_ratio <- filtered_traits_9 |>
+  filter(TraitNameNew == "LeafCN")
+
+# Check how many different measurements are used
+unique(leaf_NC_ratio$OrigUnitStr) # "g/g"   "ratio" "mg/mg" "text" 
+
+
+# Rename dataframe
+cleaned_traits_July2025 <- filtered_traits_9
+
 # Save cleaned traits dataframe
-save(traits_cleaned_species_names, file = here("data", "derived_data",
-                                               "TRY_traits_cleaned_species_names.RData"))
+save(cleaned_traits_July2025, file = here("data", "derived_data",
+                                               "TRY_traits_cleaned_July2025.RData"))
+
 # END OF SCRIPT ----------------------------------------------------------------
