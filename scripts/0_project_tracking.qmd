@@ -29,7 +29,7 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 ## File Structure
 
 | Name                                      | Function                                                                 |
-|---------------------------|---------------------------------------------|
+|-------------------------------------------|--------------------------------------------------------------------------|
 | 0_setup.R                                 | Load all necessary packages and functions                                |
 | 1.1_TRY_filtering.R                       | Filter TRY records to only include those in the boreal and tundra biomes |
 | 1.2_TRY_species_list.R                    | Clean the species list extracted from TRY                                |
@@ -46,6 +46,7 @@ source(here("scripts", "1.1_TRY_filtering.R"))
 source(here("scripts", "1.2_TRY_species_list.R"))
 source(here("scripts", "1.3_TRY_clean_traits_data.R"))
 source(here("scripts", "3.1_exploration_biome_boundary_distance.R"))
+source(here("scripts", "3.2_traits_biome_boundary_distance_relatioships.R"))
 ```
 
 # Filtering TRY Records (1.1)
@@ -126,11 +127,11 @@ The filtered `r nrow(try_filtered)` points identified **`r nrow(all_filtered_spe
 
 After these cleaning steps, `r nrow(all_filtered_species) - nrow(filtered_species_list_1)` records had been removed, leaving us with **`r nrow(filtered_species_list_1)`** records.
 
-6.  Records of subspecies, varieties or sections were standardised to species level. In total `r nrow(subspecies_varieties)` subspecies, `r varieties_count` varieties and `r sections_count` sections were standardised to species level. After the removal of duplicate species names created from these cleaning steps, **`r nrow(filtered_species_list_2)`** unique records were left
+6.  Records of subspecies, varieties or sections were standardised to species level. In total `r nrow(subspecies_varieties)` subspecies, `r nrow(varieties_count)` varieties and `r nrow(sections_count)` sections were standardised to species level. After the removal of duplicate species names created from these cleaning steps, **`r nrow(filtered_species_list_2)`** unique records were left
 7.  Checked for records with \> 2 words in the SpeciesName and found `r remaining_multi_word` records: `r unique(multi_word_names)` . These records were also standardised to species level.
 8.  Removed 1 record called "*Hieracium*"
 9.  The resulting list of **`r nrow(filtered_species_list_5)`** was run through a taxonomic checker, which found:
-    -   `r nrow(unmatched)` as unmatched records (due to misspelling in names)
+    -   ``` r n``row(unmatched) ``` as unmatched records (due to misspelling in names)
     -   `r nrow(fuzzy_matches)` fuzzy matches
     -   After unmatched and fuzzy records were handled and produced duplicate records were removed, the final list of species contained **`r nrow(corrected_species_list)`** unique species.
 
@@ -229,6 +230,26 @@ unit_explorer_table
 ```
 
 We will assume that the OrigValueStr represents the column where data collectors introduced the unit they used in their measurements, whilst the UnitName column represent the unit they were supposed to measure in. Therefore, the OrigValueStr value will be used in further analyses.
+
+## Plant Height
+
+For plant height, three different measurements were used in the dataframe: mm, cm and m. All values were standardised to cm, as a compromise between the large boreal species and small arctic specialists.
+
+## Specific Leaf Area
+
+For SLA, five different units of measurement appeared in the dataframe: $\frac {mm^2} {mg}$, $\frac {g} {m^2}$, $\frac {cm^2} {g}$, $\frac {m^2} {kg}$, $\frac {m^2} {g}$. All of them were converted to $\frac {cm^2} {g}$. N.B! The conversions need to be manually rechecked to ensure accuracy.
+
+## Seed Mass
+
+Across all records, seed mass was measured in mg.
+
+## Leaf N Content
+
+For leaf N Content, two units of measurement were used: % and $\frac {mg} {g}$. The percentages were converted to $\frac {mg} {g}$.
+
+## Leaf C: N Ratio
+
+The leaf C:N ratio has been measured in either $\frac {g} {g}$, $\frac {mg} {mg}$, "ratio" or "text". The values for the rows with "text" are numerical and appear normal. Therefore, they were kept, in light of this trait measure being a ratio.
 
 # Distance to Biome Boundary Calculations (2.1.)
 
@@ -380,3 +401,53 @@ DT::datatable(problematic_species,
 With the exception of *R. stephanii, A. alpinus, D. bila, E. canadensis, H. oreades* and *S. arctica*, all species in the table above have their synonym in the pipeline output (i.e. they have been processed correctly and are represented in the data). In the case of *L. procumbens*, the correct name is *Kalmia procumbens*, which was also corrected by the GBIF backbone and included in the pipeline output. *R. stephanii* was processed by the pipeline under the name *R. stephani*. In the case of *A. alpinus* and *H. oreades,* there are occurrences available in GBIF but they and their synonyms are not present in the pipeline output. *D. bila* and *S. arctica* remain a mystery.
 
 As for the species listed above (*A. alpinus, D. bila, H. oreades* and *S. arctica*), they will be processed through the pipeline again and output will be monitored more closely, in order to understand what the GBIF backbone is matching them to. *Elodea canadensis* represents a wetland species and will therefore be removed from the our list - no need to reprocess it.
+
+# Traits & Distance to Biome Boundary
+
+## All Data
+
+```{r traits relationships all data}
+#| label: fig-traits-relationships-all-data
+#| fig-cap: "Relationships between different traits and mean distance to biome boundary with raw data"
+#| fig-width: 7
+#| fig-height: 6
+#| out-width: "100%"
+#| echo: false
+#| message: false
+#| warning: false
+
+# Display figure
+trait_relationships_all_data
+```
+
+## Median Trait Values Per Species
+
+```{r median traits relationships}
+#| label: fig-median-traits-relationships
+#| fig-cap: "Relationships between median trait values per species and mean distance to biome boundary"
+#| fig-width: 7
+#| fig-height: 6
+#| out-width: "100%"
+#| echo: false
+#| message: false
+#| warning: false
+
+# Display figure
+median_trait_relationships
+```
+
+## Removed value \>= 5 S.D
+
+```{r traits-relationships-5SD}
+#| label: fig-traits-relationships-5SD
+#| fig-cap: "Relationships between trait values and mean distance to biome boundary when values larger than five standard deviations were removed"
+#| fig-width: 7
+#| fig-height: 6
+#| out-width: "100%"
+#| echo: false
+#| message: false
+#| warning: false
+
+# Display figure
+trait_relationships_plots
+```
