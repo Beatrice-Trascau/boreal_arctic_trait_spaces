@@ -221,4 +221,62 @@ cleaned_traits_July2025 <- filtered_traits_6
 save(cleaned_traits_July2025, file = here("data", "derived_data",
                                                "TRY_traits_cleaned_July2025.RData"))
 
+# 4. ADD FUNCTIONAL GRUPS ------------------------------------------------------
+
+# Get species list 
+#species_list <- unique(filtered_traits_6$StandardSpeciesName)
+
+# Remove any NA values
+#species_list <- species_list[!is.na(species_list)]
+
+# Get all species with growth form data
+#all_growth_forms <- BIEN_trait_trait(trait = "whole plant growth form")
+
+# Filter for species in our list
+# species_growth_forms <- all_growth_forms |>
+#   filter(scrubbed_species_binomial %in% species_list)
+
+# Clean the growth form names
+# species_growth_forms_clean <- species_growth_forms |>
+#   mutate(trait_value_clean = str_to_lower(str_trim(str_remove_all(trait_value, "\\*")))) |>
+#   mutate(GrowthForm = case_when(trait_value_clean %in% c("tree", "tree ") ~ "Tree",
+#                                 trait_value_clean %in% c("herb", "forb") ~ "Herb",
+#                                 trait_value_clean %in% c("shrub", "subshrub", "woody herb") ~ "Shrub",
+#                                 trait_value_clean %in% c("aquatic", "hydrophyte", "aquatic sedge", "aquatic sedge") ~ "Aquatic",
+#                                 trait_value_clean %in% c("vine", "climber", "climbing legume", "trailing_plant") ~ "Vine",
+#                                 trait_value_clean %in% c("grass", "graminoid", "sedge") ~ "Graminoid",
+#                                 trait_value_clean == "fern" ~ "Fern",
+#                                 trait_value_clean %in% c("club moss", "moss", "acrocarpic moss", "brophyte", "terrestrial bryoid") ~ "Bryophyte",
+#                                 trait_value_clean %in% c("vascular cryptogam", "vascular cryptogram") ~ "Cryptogam",
+#                                 trait_value_clean == "hemicryptophyte" ~ "Hemicryptophyte",
+#                                 trait_value_clean == "woody" ~ "Woody",
+#                                 trait_value_clean %in% c("parasite", "hemiparasite") ~ "Parasite",
+#                                 trait_value_clean == "4" ~ NA_character_,
+#                                 TRUE ~ str_to_title(trait_value_clean))) |>
+#   filter(!is.na(GrowthForm)) |>  # remove NA values
+#   select(scrubbed_species_binomial, GrowthForm) |>
+#   distinct()  # remove duplicates after cleaning
+
+# Check the cleaned growth forms
+# table(species_growth_forms_clean$GrowthForm)
+
+# Combine multiple growth forms per species if needed
+# growth_forms_final <- species_growth_forms_clean |>
+#   group_by(scrubbed_species_binomial) |>
+#   summarise(GrowthForm = paste(sort(unique(GrowthForm)), collapse = "; "), 
+#             .groups = "drop") |>
+#   rename(StandardSpeciesName = scrubbed_species_binomial)
+
+# Add growth form data to main dataframe
+# filtered_traits_7 <- filtered_traits_6 |>
+#   left_join(growth_forms_final, by = "StandardSpeciesName")
+
+# Rename dataframe
+# cleaned_traits_July2025 <- filtered_traits_7
+
+# Save cleaned traits dataframe
+# save(cleaned_traits_July2025, file = here("data", "derived_data",
+#                                           "TRY_traits_cleaned_July2025.RData"))
+
+
 # END OF SCRIPT ----------------------------------------------------------------
