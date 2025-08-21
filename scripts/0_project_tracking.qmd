@@ -131,7 +131,7 @@ After these cleaning steps, `r nrow(all_filtered_species) - nrow(filtered_specie
 7.  Checked for records with \> 2 words in the SpeciesName and found `r remaining_multi_word` records: `r unique(multi_word_names)` . These records were also standardised to species level.
 8.  Removed 1 record called "*Hieracium*"
 9.  The resulting list of **`r nrow(filtered_species_list_5)`** was run through a taxonomic checker, which found:
-    -   ``` r n``row(unmatched) ``` as unmatched records (due to misspelling in names)
+    -   `r nrow(unmatched)` as unmatched records (due to misspelling in names)
     -   `r nrow(fuzzy_matches)` fuzzy matches
     -   After unmatched and fuzzy records were handled and produced duplicate records were removed, the final list of species contained **`r nrow(corrected_species_list)`** unique species.
 
@@ -214,42 +214,7 @@ Upon inspection, we found that the original TRY trait datset required some clean
 
 Firstly, the species names were cleaned in the exact same way as the species list extracted from this raw traits dataset in script 1.2.
 
-The column "OrigValueStr" was read in as a character, instead of numeric (as expected). This was due to the fact that a total of `r nrow(rows_with_letters)` contained letter `r nrow(rows_with_ranges)` contained ranges and `r nrow(rows_with_characters)` contained special characters in this column. Closer inspection revealed two types of issues: three rows containing "cm\*" after the numerical values and `r nrow(rows_with_ranges)` with scientific notations. The "cm\*" was removed from the specific rows and scientific notations were left unchanged, as they would be converted correctly to numeric with the as.numeric() function.
-
-We also found that for several rows, the columns "OrigValueStr" and "UnitName" did not match. Most rows showed OrigValueStr = cm while UnitName = m. However, there were other mismatches that made less sense.
-
-```{r unit mismatch table}
-#| label: unit-mismatch-table
-#| tbl-cap: "Mismatching Units of TRY records"
-#| echo: false
-#| message: false
-#| warning: false
-
-# Display interactive table
-unit_explorer_table
-```
-
-We will assume that the OrigValueStr represents the column where data collectors introduced the unit they used in their measurements, whilst the UnitName column represent the unit they were supposed to measure in. Therefore, the OrigValueStr value will be used in further analyses.
-
-## Plant Height
-
-For plant height, three different measurements were used in the dataframe: mm, cm and m. All values were standardised to cm, as a compromise between the large boreal species and small arctic specialists.
-
-## Specific Leaf Area
-
-For SLA, five different units of measurement appeared in the dataframe: $\frac {mm^2} {mg}$, $\frac {g} {m^2}$, $\frac {cm^2} {g}$, $\frac {m^2} {kg}$, $\frac {m^2} {g}$. All of them were converted to $\frac {cm^2} {g}$. N.B! The conversions need to be manually rechecked to ensure accuracy.
-
-## Seed Mass
-
-Across all records, seed mass was measured in mg.
-
-## Leaf N Content
-
-For leaf N Content, two units of measurement were used: % and $\frac {mg} {g}$. The percentages were converted to $\frac {mg} {g}$.
-
-## Leaf C: N Ratio
-
-The leaf C:N ratio has been measured in either $\frac {g} {g}$, $\frac {mg} {mg}$, "ratio" or "text". The values for the rows with "text" are numerical and appear normal. Therefore, they were kept, in light of this trait measure being a ratio.
+To plot the realtionships, the column "StdValue" was used. This columns contains values for the traits after they have been standaradised by the TRY pipelines to reach the unit of measurement used in UnitName.
 
 # Distance to Biome Boundary Calculations (2.1.)
 
