@@ -31,7 +31,7 @@ tundra <- st_union(global_biomes[global_biomes$BIOME == 11 &(global_biomes$REALM
 
 # Make sure geometries are valid
 boreal_forest <- st_make_valid(boreal_forest)
-tundra <- st_make_balid(tundra)
+tundra <- st_make_valid(tundra)
 
 # Re-project biomes to North Pole Lamvert Azimuthal Equal Area (EPSG: 3574)
 boreal_sf <- st_transform(boreal_forest, "EPSG:3574")
@@ -43,8 +43,10 @@ tundra_sf <- st_transform(tundra, "EPSG:3574")
 
 # Remove Elodea canadensis & hybrids
 biome_boundaries <- detailed_results |>
-  filter(!species == "Elodea canadensis",
-         !grepl("×", species))
+  filter(!species == "Elodea canadensis")
+
+biome_boundaries <- biome_boundaries |>
+  filter(!str_detect(species, " × "))
 
 # Combine the dataframes
 traits_biome_boundaries <- cleaned_traits |>
@@ -52,7 +54,8 @@ traits_biome_boundaries <- cleaned_traits |>
 
 # Rename column with mean distance to biome boundary to reflect the fact that
   # it is a species-level mean
-
+traits_biome_boundaries <- traits_biome_boundaries |>
+  rename(species_level_mean_distance_km = mean_distance_km)
 
 ## 2.2. Calculate distance to biome boundary for each trait record -------------
 
@@ -88,7 +91,7 @@ if(sum(in_boreal) > 0){
   boreal_points <- traits_sf[in_boreal, ]
   boreal_distances <- st_distance(boreal_points, boreal_boundary)
   # take minimum distance to boundary
-  traits_with_coords$record_level_distance_to_biome_boundary <- 
+  traits_with_coords$record_level_distance_to_biome_boundary[in_boreal] <- 
     apply(boreal_distances, 1, min) / 1000 # convert to km
 }
 
@@ -97,7 +100,7 @@ if(sum(in_tundra) > 0){
   tundra_points <- traits_sf[in_tundra, ]
   tundra_distances <- st_distance(tundra_points, tundra_boundary)
   # take minimum distance to boundary
-  traits_with_coords$record_level_distance_to_biome_boundary <- 
+  traits_with_coords$record_level_distance_to_biome_boundary[in_tundra] <- 
     -apply(tundra_distances, 1, min) / 1000 # convert to km
 }
 
@@ -112,11 +115,14 @@ traits_biome_boundaries <- traits_with_coords
 
 ## 2.3. Clean growth form column -----------------------------------------------
 
+# Check how many growth forms there are
+unique(traits_biome_boundaries$GrowthForm)
+
 ## 2.4. Add LHS strategy for each species --------------------------------------
 
 # Check if we have all required traits
 required_traits_lhs <- c("PlantHeight", "SeedMass", "SLA")
-available_traits <- unqiue(traits_biome_boundaries$TraitNameNew)
+available_traits <- unique(traits_biome_boundaries$TraitNameNew)
 
 # Check if any traits are missing
 missing_lhs <- setdiff(required_traits_lhs, available_traits)
@@ -124,7 +130,7 @@ available_lhs <- intersect(required_traits_lhs, available_traits)
 
 lhs_data <- traits_biome_boundaries |>
   # filter for required traits
-  fileter(TraitNameNew %in% required_traits_lhs) |>
+  filter(TraitNameNew %in% required_traits_lhs) |>
   # remove outliers (>= 5 SDs)
   group_by(StandardSpeciesName, TraitNameNew) |>
   mutate(trait_mean = mean(StdValue, na.rm = TRUE),
@@ -139,8 +145,10 @@ lhs_data <- traits_biome_boundaries |>
             .groups = "drop") |>
   # convert to wide format
   pivot_wider(names_from = TraitNameNew,
-              values_from = MedianTraitValue) |>
-  # rename columns to match MultiTraits requirements
+              values_from = MedianTraitValue)
+
+# Rename columns to match MultiTraits requirements
+lhs_data <- lhs_data |>
   rename(Height = PlantHeight,
          SeedMass = SeedMass,
          SLA = SLA) |>
