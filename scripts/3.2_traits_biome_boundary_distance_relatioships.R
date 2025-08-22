@@ -496,4 +496,112 @@ seed_mass_growth_forms
 leaf_n_growth_forms
 leaf_cn_growth_forms
 
+# 4. NMDS ----------------------------------------------------------------------
+
+## 4.1. Prepare data for NMDS --------------------------------------------------
+
+# Categorise species as either boreal or tundra specialists
+species_biome_classification <- traits_median_df |>
+  distinct(StandardSpeciesName, species_level_mean_distance_km) |>
+  mutate(biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+                                    species_level_mean_distance_km < 0 ~ "tundra",
+                                    TRUE ~ "boundary"))  # exactly at boundary
+
+# Create trait values per species in wide format for NMDS
+trait_matrix <- traits_median_df |>
+  filter(StandardSpeciesName %in% species_biome_classification$StandardSpeciesName) |>
+  select(StandardSpeciesName, TraitNameNew, MedianTraitValue) |>
+  pivot_wider(names_from = TraitNameNew, 
+              values_from = MedianTraitValue) |>
+  column_to_rownames("StandardSpeciesName")
+
+# Remove species with missing data for any trait
+trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
+
+# Check which traits are available
+colnames(trait_matrix)
+
+## 4.2. Run NMDS ---------------------------------------------------------------
+
+# Set seed for NMDS
+set.seed(52164)
+
+# Run NMDS
+nmds_result <- metaMDS(trait_matrix, 
+                       distance = "euclidean",
+                       k = 2,
+                       trymax = 100)
+
+# Check stress value (should be < 0.2, ideally < 0.1)
+nmds_result$stress # 0.09763259
+
+## 4.3. Plot output ------------------------------------------------------------
+
+# Extract NMDS scores
+nmds_scores <- as.data.frame(nmds_result$points)
+nmds_scores$StandardSpeciesName <- rownames(nmds_scores)
+
+# Add biome classification
+nmds_plot_data <- nmds_scores |>
+  left_join(species_biome_classification, by = "StandardSpeciesName") |>
+  filter(!is.na(biome_category))
+
+# Create NMDS plot
+nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = biome_category)) +
+  geom_point(size = 2, alpha = 0.7) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "skyblue"),
+                     name = "Biome") +
+  labs(x = "NMDS1", y = "NMDS2") +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  # add stress value as subtitle
+  labs(subtitle = paste("Based on", ncol(trait_matrix), "traits,", nrow(nmds_plot_data), "species"))
+
+# Add ellipses around each group
+nmds_plot_with_hulls <- nmds_plot +
+  stat_ellipse(aes(fill = biome_category), alpha = 0.2, geom = "polygon",
+               level = 0.95) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "skyblue"),
+                    guide = "none")
+
+## 4.4. Plot output with trait vectors -----------------------------------------
+
+# Fit trait vectors to the NMDS ordination
+trait_fit <- envfit(nmds_result, trait_matrix, permutations = 999)
+
+# Extract the vectors
+trait_vectors <- as.data.frame(scores(trait_fit, "vectors"))
+trait_vectors$trait <- rownames(trait_vectors)
+
+# Check significance of vectors
+print(trait_fit)
+
+# Plot with proper trait vectors (no arbitrary scaling)
+nmds_plot_with_proper_vectors <- nmds_plot_with_hulls +
+  geom_segment(data = trait_vectors, 
+               aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2),
+               arrow = arrow(length = unit(0.3, "cm")), 
+               color = "black", 
+               size = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = trait_vectors,
+            aes(x = NMDS1 * 1.1, y = NMDS2 * 1.1, label = trait),
+            color = "black", 
+            size = 3, 
+            fontface = "bold",
+            inherit.aes = FALSE)
+
+# 4.5. Statistical tests -------------------------------------------------------
+
+# Test for significant differences between groups using PERMANOVA
+permanova_result <- adonis2(trait_matrix ~ biome_category, 
+                            data = species_biome_classification[species_biome_classification$StandardSpeciesName %in% rownames(trait_matrix), ])
+
+print(permanova_result)
+
+# Test for homogeneity of dispersions
+dispersion_test <- betadisper(vegdist(trait_matrix), 
+                              species_biome_classification$biome_category[species_biome_classification$StandardSpeciesName %in% rownames(trait_matrix)])
+permutest(dispersion_test)
+
 # END OF SCRIPT ----------------------------------------------------------------
