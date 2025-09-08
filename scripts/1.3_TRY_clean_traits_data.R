@@ -267,6 +267,11 @@ growth_forms_final <- species_growth_forms_clean |>
             .groups = "drop") |>
   rename(StandardSpeciesName = scrubbed_species_binomial)
 
+# Save information about the growth forms to file
+write.csv(growth_forms_final, here("data", "derived_data", 
+                                   "BIEN_growth_forms.csv"))
+
+
 # Add growth form data to main dataframe
 filtered_traits_7 <- filtered_traits_6 |>
   left_join(growth_forms_final, by = "StandardSpeciesName")
