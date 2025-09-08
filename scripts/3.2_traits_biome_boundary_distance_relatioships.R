@@ -113,12 +113,7 @@ traits_with_coords <- traits_with_coords |>
 # Update the main dataframe
 traits_biome_boundaries <- traits_with_coords
 
-## 2.3. Clean growth form column -----------------------------------------------
-
-# Check how many growth forms there are
-unique(traits_biome_boundaries$GrowthForm)
-
-## 2.4. Add LHS strategy for each species --------------------------------------
+## 2.3. Add LHS strategy for each species --------------------------------------
 
 # Check if we have all required traits
 required_traits_lhs <- c("PlantHeight", "SeedMass", "SLA")
@@ -172,14 +167,18 @@ traits_biome_boundaries_with_lhs <- traits_biome_boundaries |>
               select(StandardSpeciesName, contains("lhs") | contains("LHS") | contains("strategy")),
             by = "StandardSpeciesName")
 
+# 3. CLEAN GROWTH FORMS --------------------------------------------------------
 
-# 3. PLOT RELATIONSHIPS --------------------------------------------------------
+# Check how many growth forms there are
+unique(traits_biome_boundaries$GrowthForm)
+
+# 4. PLOT RELATIONSHIPS --------------------------------------------------------
 
 # Calculate universal x-axis limits
 x_min <- min(traits_biome_boundaries_with_lhs$record_level_distance_to_biome_boundary, na.rm = TRUE)
 x_max <- max(traits_biome_boundaries_with_lhs$record_level_distance_to_biome_boundary, na.rm = TRUE)
 
-## 3.1. Filter for each trait --------------------------------------------------
+## 4.1. Filter for each trait --------------------------------------------------
 
 # Filter for plant height
 plant_height <- traits_biome_boundaries_with_lhs |>
@@ -201,7 +200,7 @@ leaf_N <- traits_biome_boundaries_with_lhs |>
 leaf_CN_ratio <- traits_biome_boundaries_with_lhs |>
   filter(TraitNameNew == "LeafCN")
 
-## 3.2 Plot all the data -------------------------------------------------------
+## 4.2 Plot all the data -------------------------------------------------------
 
 # Plot plant height
 plant_height_all_data <- ggplot(plant_height, aes(x = record_level_distance_to_biome_boundary, 
@@ -257,7 +256,7 @@ trait_relationships_all_data <- plot_grid(plant_height_all_data, sla_all_data,
                                           align = "hv",
                                           axis = "tblr")
 
-## 3.3. Remove values >= 5 SD --------------------------------------------------
+## 4.3. Remove values >= 5 SD --------------------------------------------------
 
 # Calculate means
 plant_height_mean <- mean(plant_height$StdValue, na.rm = TRUE)
@@ -332,7 +331,7 @@ trait_relationships_plots <- plot_grid(plant_height_plot, sla_plot,
                                        align = "hv",
                                        axis = "tblr")
 
-## 3.4. Plot median values per species -----------------------------------------
+## 4.4. Plot median values per species -----------------------------------------
 
 # Determine most common growth form per species
 species_growth_forms <- traits_biome_boundaries_with_lhs |>
@@ -420,7 +419,7 @@ median_trait_relationships <- plot_grid(median_plant_height, median_sla,
                                         align = "hv",
                                         axis = "tblr")
 
-## 3.5. Median trait value per species per growth form -------------------------
+## 4.5. Median trait value per species per growth form -------------------------
 
 # Get all unique growth forms (excluding NA)
 all_growth_forms <- unique(traits_median_df$GrowthForm)
@@ -496,9 +495,9 @@ seed_mass_growth_forms
 leaf_n_growth_forms
 leaf_cn_growth_forms
 
-# 4. NMDS ----------------------------------------------------------------------
+# 5. NMDS ----------------------------------------------------------------------
 
-## 4.1. Prepare data for NMDS --------------------------------------------------
+## 5.1. Prepare data for NMDS --------------------------------------------------
 
 # Categorise species as either boreal or tundra specialists
 species_biome_classification <- traits_median_df |>
@@ -521,7 +520,7 @@ trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
 # Check which traits are available
 colnames(trait_matrix)
 
-## 4.2. Run NMDS ---------------------------------------------------------------
+## 5.2. Run NMDS ---------------------------------------------------------------
 
 # Set seed for NMDS
 set.seed(52164)
@@ -535,7 +534,7 @@ nmds_result <- metaMDS(trait_matrix,
 # Check stress value (should be < 0.2, ideally < 0.1)
 nmds_result$stress # 0.09763259
 
-## 4.3. Plot output ------------------------------------------------------------
+## 5.3. Plot output ------------------------------------------------------------
 
 # Extract NMDS scores
 nmds_scores <- as.data.frame(nmds_result$points)
@@ -564,7 +563,7 @@ nmds_plot_with_hulls <- nmds_plot +
   scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "skyblue"),
                     guide = "none")
 
-## 4.4. Plot output with trait vectors -----------------------------------------
+## 5.4. Plot output with trait vectors -----------------------------------------
 
 # Fit trait vectors to the NMDS ordination
 trait_fit <- envfit(nmds_result, trait_matrix, permutations = 999)
@@ -591,7 +590,7 @@ nmds_plot_with_proper_vectors <- nmds_plot_with_hulls +
             fontface = "bold",
             inherit.aes = FALSE)
 
-# 4.5. Statistical tests -------------------------------------------------------
+## 5.5. Statistical tests ------------------------------------------------------
 
 # Test for significant differences between groups using PERMANOVA
 permanova_result <- adonis2(trait_matrix ~ biome_category, 
