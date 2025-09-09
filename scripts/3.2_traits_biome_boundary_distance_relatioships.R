@@ -165,12 +165,40 @@ lhs_final <- lhs_results |>
 traits_biome_boundaries_with_lhs <- traits_biome_boundaries |>
   left_join(lhs_final |>
               select(StandardSpeciesName, contains("lhs") | contains("LHS") | contains("strategy")),
-            by = "StandardSpeciesName")
+            by = "StandardSpeciesName") |>
+  mutate(max_trait_value = max(StdValue, na.rm = TRUE))
 
 # 3. CLEAN GROWTH FORMS --------------------------------------------------------
 
 # Check how many growth forms there are
 unique(traits_biome_boundaries$GrowthForm)
+
+# Create function to search by species
+species_trait_summary <- function(StandardSpeciesName) {
+  traits_biome_boundaries_with_lhs |>
+    filter(StandardSpeciesName == !!StandardSpeciesName) |>
+    count(TraitNameNew, name = "n_records") |>
+    arrange(desc(n_records)) |>
+    mutate(species = StandardSpeciesName) |>
+    select(species, TraitNameNew, n_records)
+}
+
+# Check species summary
+species_trait_summary("Alchemilla alpina")
+species_trait_summary("Pinus sylvestris")
+
+# Function to get summary for any growth form
+growthform_trait_summary <- function(growth_form) {
+  traits_biome_boundaries_with_lhs |>
+    filter(GrowthForm == !!growth_form) |>
+    count(TraitNameNew, name = "n_records") |>
+    arrange(desc(n_records)) |>
+    mutate(growth_form = growth_form) |>
+    select(growth_form, TraitNameNew, n_records)
+}
+
+# Usage examples:
+growthform_trait_summary("Tree")
 
 # 4. PLOT RELATIONSHIPS --------------------------------------------------------
 
@@ -272,54 +300,66 @@ seed_mass_sd <- sd(seed_mass$StdValue, na.rm = TRUE)
 leaf_N_sd <- sd(leaf_N$StdValue, na.rm = TRUE)
 leaf_CN_sd <- sd(leaf_CN_ratio$StdValue, na.rm = TRUE)
 
+# Log trait values
+plant_height <- plant_height |>
+  mutate(LogStdValue = log(StdValue))
+sla <- sla |>
+  mutate(LogStdValue = log(StdValue))
+seed_mass <- seed_mass |>
+  mutate(LogStdValue = log(StdValue))
+leaf_N <- leaf_N |>
+  mutate(LogStdValue = log(StdValue))
+leaf_CN_ratio <- leaf_CN_ratio |>
+  mutate(LogStdValue = log(StdValue))
+
 # Plant height
 plant_height_plot <- plant_height |>
-  filter(abs(StdValue - plant_height_mean) < 5 * plant_height_sd) |>
-  ggplot(aes(x = record_level_distance_to_biome_boundary, y = StdValue)) +
+  filter(abs(LogStdValue - plant_height_mean) < 5 * plant_height_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
   geom_point() +
   geom_smooth() +
   xlim(x_min, x_max) +
-  labs(x = "Distance to Biome Boundary (km)", y = "Plant height (cm)") +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Plant height (cm)") +
   theme_classic()
 
 # SLA
 sla_plot <- sla |>
-  filter(abs(StdValue - sla_mean) < 5 * sla_sd) |>
-  ggplot(aes(x = record_level_distance_to_biome_boundary, y = StdValue)) +
+  filter(abs(LogStdValue - sla_mean) < 5 * sla_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
   geom_point() +
   geom_smooth() +
   xlim(x_min, x_max) +
-  labs(x = "Distance to Biome Boundary (km)", y = expression("SLA (m"^2*"/kg)")) +
+  labs(x = "Distance to Biome Boundary (km)", y = expression("Log SLA (m"^2*"/kg)")) +
   theme_classic()
 
 # Seed Mass
 seed_mass_plot <- seed_mass |>
-  filter(abs(StdValue - seed_mass_mean) < 5 * seed_mass_sd) |>
-  ggplot(aes(x = record_level_distance_to_biome_boundary, y = StdValue)) +
+  filter(abs(LogStdValue - seed_mass_mean) < 5 * seed_mass_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
   geom_point() +
   geom_smooth() +
   xlim(x_min, x_max) +
-  labs(x = "Distance to Biome Boundary (km)", y = "Seed Mass (mg)") +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Seed Mass (mg)") +
   theme_classic()
 
 # Leaf N content
 leaf_N_plot <- leaf_N |>
-  filter(abs(StdValue - leaf_N_mean) < 5 * leaf_N_sd) |>
-  ggplot(aes(x = record_level_distance_to_biome_boundary, y = StdValue)) +
+  filter(abs(LogStdValue - leaf_N_mean) < 5 * leaf_N_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
   geom_point() +
   geom_smooth() +
   xlim(x_min, x_max) +
-  labs(x = "Distance to Biome Boundary (km)", y = "Leaf N (mg/g)") +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Leaf N (mg/g)") +
   theme_classic()
 
 # Leaf C:N ratio
 leaf_CN_plot <- leaf_CN_ratio |>
-  filter(abs(StdValue - leaf_CN_mean) < 5 * leaf_CN_sd) |>
-  ggplot(aes(x = record_level_distance_to_biome_boundary, y = StdValue)) +
+  filter(abs(LogStdValue - leaf_CN_mean) < 5 * leaf_CN_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
   geom_point() +
   geom_smooth() +
   xlim(x_min, x_max) +
-  labs(x = "Distance to Biome Boundary (km)", y = "Leaf C:N Ratio") +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Leaf C:N Ratio") +
   theme_classic()
 
 # Combine plots in one figure
@@ -345,7 +385,8 @@ species_growth_forms <- traits_biome_boundaries_with_lhs |>
 # Calculate median values per species
 traits_median <- traits_biome_boundaries_with_lhs |>
   group_by(StandardSpeciesName, TraitNameNew) |>
-  summarise(MedianTraitValue = median(StdValue, na.rm = TRUE),
+  summarise(max_trait_value = max(StdValue, na.rm = TRUE),
+            MedianTraitValue = median(StdValue, na.rm = TRUE),
             .groups = "drop")
   
 # Add distance to biome boundaries and growth form 
@@ -514,25 +555,42 @@ trait_matrix <- traits_median_df |>
               values_from = MedianTraitValue) |>
   column_to_rownames("StandardSpeciesName")
 
+# Create table of species that are missing values
+missing_plant_height <- trait_matrix |>
+  filter(is.na(PlantHeight))
+missing_leaf_CN <- trait_matrix |>
+  filter(is.na(LeafCN))
+missing_leaf_N <- trait_matrix |>
+  filter(is.na(LeafN))
+missing_SLA <- trait_matrix |>
+  filter(is.na(SLA))
+missing_seed_mass <- trait_matrix |>
+  filter(is.na(SeedMass))
+
 # Remove species with missing data for any trait
-trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
+complete_trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
 
 # Check which traits are available
-colnames(trait_matrix)
+colnames(complete_trait_matrix)
 
 ## 5.2. Run NMDS ---------------------------------------------------------------
 
 # Set seed for NMDS
-set.seed(52164)
+set.seed(53135)
 
 # Run NMDS
-nmds_result <- metaMDS(trait_matrix, 
+nmds_result <- metaMDS(complete_trait_matrix, 
                        distance = "euclidean",
-                       k = 2,
+                       k = 3,
                        trymax = 100)
 
 # Check stress value (should be < 0.2, ideally < 0.1)
-nmds_result$stress # 0.09763259
+nmds_result$stress # 0.04216575
+
+# Check stress value per dimension
+dimcheck_out <- dimcheckMDS(complete_trait_matrix,
+                            distance = "bray",
+                            k = 5)
 
 ## 5.3. Plot output ------------------------------------------------------------
 
@@ -545,8 +603,18 @@ nmds_plot_data <- nmds_scores |>
   left_join(species_biome_classification, by = "StandardSpeciesName") |>
   filter(!is.na(biome_category))
 
+# Create polygon hull
+boreal_scores <- nmds_plot_data[nmds_plot_data$biome_category == "boreal", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
+                                                                           "boreal", c("MDS1", "MDS2")]), ]  # hull values for boreal
+tundra_scores <- nmds_plot_data[nmds_plot_data$biome_category == "tundra", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
+                                                                   "tundra", c("MDS1", "MDS2")]), ]  # hull values for grp B
+
+hull_data <- rbind(boreal_scores, tundra_scores)  #combine grp.a and grp.b
+hull.data
+
 # Create NMDS plot
 nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = biome_category)) +
+  geom_polygon(data=hull_data,aes(x=MDS1,y=MDS2,fill=biome_category,group=biome_category),alpha=0.30) +
   geom_point(size = 2, alpha = 0.7) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "skyblue"),
                      name = "Biome") +
@@ -602,5 +670,21 @@ print(permanova_result)
 dispersion_test <- betadisper(vegdist(trait_matrix), 
                               species_biome_classification$biome_category[species_biome_classification$StandardSpeciesName %in% rownames(trait_matrix)])
 permutest(dispersion_test)
+
+# 6. GLLVM? --------------------------------------------------------------------
+
+# Fit gllvm with trait_matrix and biome classifications
+gllvm_model <- gllvm(trait_matrix, 
+                     X = data.frame(biome = nmds_plot_data$biome_category),
+                     num.lv = 2,
+                     family = "gaussian",
+                     seed = 52164)
+
+# Compare to NMDS stress
+gllvm_model$logL
+
+# Extract and plot results
+ordiplot(gllvm_model, biplot = TRUE)
+coefplot(gllvm_model)  
 
 # END OF SCRIPT ----------------------------------------------------------------
