@@ -75,3 +75,79 @@ cat("Suspect names remaining after filtering:", remaining_suspect, "\n") #0
 remaining_single_words <- sum(!grepl("\\s", global_traits1$AccSpeciesName) & 
                                 nchar(global_traits1$AccSpeciesName) > 2)
 cat("Single word names remaining after filtering:", remaining_single_words, "\n") #0
+
+## 2.2. Standardise subspecies/varieties to species level ----------------------
+
+# Extract list of subspecies/varieties
+subspecies_varieties <- global_traits1 |>
+  filter(grepl("subsp\\.", AccSpeciesName) | 
+           grepl("var\\.", AccSpeciesName) |
+           grepl("sect\\.", AccSpeciesName))
+
+# Count how many records there were in subspecies group
+subspecies_count <- global_traits1 |>
+  filter(grepl("subsp\\.", AccSpeciesName))
+
+# Count how many records there were in varieties group
+varieties_count <- global_traits1 |>
+  filter(grepl("var\\.", AccSpeciesName))
+
+# Count how many records there were in sections group
+sections_count <- global_traits1 |>
+  filter(grepl("sect\\.", AccSpeciesName))
+
+# Print results
+cat("Total records with subspecies/varieties/sections:", length(unique(subspecies_varieties$AccSpeciesName)), "\n") #44
+cat("Subspecies (subsp.):", length(unique(subspecies_count$AccSpeciesName)), "\n") #37
+cat("Varieties (var.):", length(unique(varieties_count$AccSpeciesName)), "\n") #3
+cat("Sections (sect.):", length(unique(sections_count$AccSpeciesName)), "\n") #4
+
+# Standardise records
+global_traits2 <- global_traits1 |>
+  # replace everything after and including "subsp.", "var.", or "sect." with nothing
+  mutate(StandardSpeciesName = str_replace(AccSpeciesName, " (subsp\\.|var\\.|sect\\.).*$", ""))
+
+# Get species names that do not have subspecies/varieties etc
+regular_species <- global_traits1 |>
+  filter(!grepl("subsp\\.", AccSpeciesName) &
+           !grepl("var\\.", AccSpeciesName) &
+           !grepl("sect\\.", AccSpeciesName))
+
+# Check the counts
+cat("Original filtered species count:", length(unique(global_traits1$AccSpeciesName)), "\n") #1754
+cat("Number of subspecies/varieties found:", length(unique(subspecies_varieties$AccSpeciesName)), "\n") #44
+cat("Number of regular species:", length(unique(regular_species$AccSpeciesName)), "\n") #1710
+cat("Final standardized species count:", length(unique(global_traits2$StandardSpeciesName)), "\n") #1722
+
+# Check if there are any subspecies left
+remaining_subspecies <- global_traits2 |>
+  filter(grepl("subsp\\.", StandardSpeciesName))
+cat("Subspecies (subsp.) remaining after standardization:", length(unique(remaining_subspecies$StandardSpeciesName)), "\n") #0
+
+# Check if any varieties remain in the final list
+remaining_varieties <- global_traits2 |>
+  filter(grepl("var\\.", StandardSpeciesName))
+cat("Varieties (var.) remaining after standardization:",  length(unique(remaining_varieties$StandardSpeciesName)), "\n") #0
+
+# Check if any sections remain in the final list
+remaining_sections <- global_traits2 |>
+  filter(grepl("sect\\.", StandardSpeciesName))
+cat("Sections (sect.) remaining after standardization:", length(unique(remaining_sections$StandardSpeciesName)), "\n") #0
+
+# Check for names with more than 2 words (potential missed subspecies/varieties)
+multi_word_names <- global_traits2$StandardSpeciesName[lengths(strsplit(global_traits2$StandardSpeciesName, "\\s+")) > 2]
+remaining_multi_word <- length(multi_word_names)
+cat("Names with more than 2 words remaining:", remaining_multi_word, "\n") #681
+multi_word_names # all have 'x' at the end
+
+# Remove 'x' at the end of the species names
+global_traits3  <- global_traits2 |>
+  mutate(StandardSpeciesName = str_replace(StandardSpeciesName, "\\sx$", ""))
+
+# Verify there are no multi-word records left
+remaining_multi_word_fixed <- global_traits3$StandardSpeciesName[
+  lengths(strsplit(global_traits3$StandardSpeciesName, "\\s+")) > 2] #0
+
+# Remove Hieracium (again)
+global_traits4 <- global_traits3 |>
+  filter(StandardSpeciesName != "Hieracium")
