@@ -28,13 +28,15 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 
 ## File Structure
 
-| Name                                      | Function                                                                 |
-|-------------------------------------------|--------------------------------------------------------------------------|
-| 0_setup.R                                 | Load all necessary packages and functions                                |
-| 1.1_TRY_filtering.R                       | Filter TRY records to only include those in the boreal and tundra biomes |
-| 1.2_TRY_species_list.R                    | Clean the species list extracted from TRY                                |
-| 2.1_GBIF_biome_boundary_distance.R        | Calculate distances to biome boundaries for each species                 |
-| 3.1_exploration_biome_boundary_distance.R | Explore & validate output of script 2.1                                  |
+| Name                                             | Function                                                                                                                                              |
+|---------------------------|---------------------------------------------|
+| 0_setup.R                                        | Load all necessary packages and functions                                                                                                             |
+| 1.1_TRY_filtering.R                              | Filter TRY records to only include those in the boreal and tundra biomes                                                                              |
+| 1.2_TRY_species_list.R                           | Clean the species list extracted from TRY                                                                                                             |
+| 1.3_TRY_clean_traits_data.R                      | Clean the species names in the TRY traits dataset                                                                                                     |
+| 2.1_GBIF_biome_boundary_distance.R               | Calculate distances to biome boundaries for each species                                                                                              |
+| 3.1_exploration_biome_boundary_distance.R        | Explore & validate output of script 2.1 (interactive tables)                                                                                          |
+| 3.2_traits_biome_boundary_distance_relationships | Add additional information to traits dataframe (growth form, lhs strategy, distance to biome boundary for points), plotted relationships and ran NMDS |
 
 ```{r packages}
 #| label: packages
@@ -369,23 +371,7 @@ As for the species listed above (*A. alpinus, D. bila, H. oreades* and *S. arcti
 
 # Traits & Distance to Biome Boundary
 
-## All Data
-
-```{r traits relationships all data}
-#| label: fig-traits-relationships-all-data
-#| fig-cap: "Relationships between different traits and mean distance to biome boundary with raw data"
-#| fig-width: 7
-#| fig-height: 6
-#| out-width: "100%"
-#| echo: false
-#| message: false
-#| warning: false
-
-# Display figure
-trait_relationships_all_data
-```
-
-## Median Trait Values Per Species
+## Removed value \>= 5 S.D
 
 ```{r median traits relationships}
 #| label: fig-median-traits-relationships
@@ -397,11 +383,123 @@ trait_relationships_all_data
 #| message: false
 #| warning: false
 
+# Calculate universal x-axis limits
+x_min <- min(traits_biome_boundaries_with_lhs$record_level_distance_to_biome_boundary, na.rm = TRUE)
+x_max <- max(traits_biome_boundaries_with_lhs$record_level_distance_to_biome_boundary, na.rm = TRUE)
+
+## Filter for each trait
+
+# Filter for plant height
+plant_height <- traits_biome_boundaries_with_lhs |>
+  filter(TraitNameNew == "PlantHeight")
+
+# Filter for SLA
+sla <- traits_biome_boundaries_with_lhs |>
+  filter(TraitNameNew == "SLA")
+
+# Filter for seed mass
+seed_mass <- traits_biome_boundaries_with_lhs |>
+  filter(TraitNameNew == "SeedMass")
+
+# Filter for leaf N
+leaf_N <- traits_biome_boundaries_with_lhs |>
+  filter(TraitNameNew == "LeafN")
+
+# Filter for leaf N:C ratio
+leaf_CN_ratio <- traits_biome_boundaries_with_lhs |>
+  filter(TraitNameNew == "LeafCN")
+
+# Calculate means
+plant_height_mean <- mean(plant_height$StdValue, na.rm = TRUE)
+sla_mean <- mean(sla$StdValue, na.rm = TRUE)
+seed_mass_mean <- mean(seed_mass$StdValue, na.rm = TRUE)
+leaf_N_mean <- mean(leaf_N$StdValue, na.rm = TRUE)
+leaf_CN_mean <- mean(leaf_CN_ratio$StdValue, na.rm = TRUE)
+
+# Calculate SD
+plant_height_sd <- sd(plant_height$StdValue, na.rm = TRUE)
+sla_sd <- sd(sla$StdValue, na.rm = TRUE)
+seed_mass_sd <- sd(seed_mass$StdValue, na.rm = TRUE)
+leaf_N_sd <- sd(leaf_N$StdValue, na.rm = TRUE)
+leaf_CN_sd <- sd(leaf_CN_ratio$StdValue, na.rm = TRUE)
+
+# Log trait values
+plant_height <- plant_height |>
+  mutate(LogStdValue = log(StdValue))
+sla <- sla |>
+  mutate(LogStdValue = log(StdValue))
+seed_mass <- seed_mass |>
+  mutate(LogStdValue = log(StdValue))
+leaf_N <- leaf_N |>
+  mutate(LogStdValue = log(StdValue))
+leaf_CN_ratio <- leaf_CN_ratio |>
+  mutate(LogStdValue = log(StdValue))
+
+# Plant height
+plant_height_plot <- plant_height |>
+  filter(abs(LogStdValue - plant_height_mean) < 5 * plant_height_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min, x_max) +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Plant height (cm)") +
+  theme_classic()
+
+# SLA
+sla_plot <- sla |>
+  filter(abs(LogStdValue - sla_mean) < 5 * sla_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min, x_max) +
+  labs(x = "Distance to Biome Boundary (km)", y = expression("Log SLA (m"^2*"/kg)")) +
+  theme_classic()
+
+# Seed Mass
+seed_mass_plot <- seed_mass |>
+  filter(abs(LogStdValue - seed_mass_mean) < 5 * seed_mass_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min, x_max) +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Seed Mass (mg)") +
+  theme_classic()
+
+# Leaf N content
+leaf_N_plot <- leaf_N |>
+  filter(abs(LogStdValue - leaf_N_mean) < 5 * leaf_N_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min, x_max) +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Leaf N (mg/g)") +
+  theme_classic()
+
+# Leaf C:N ratio
+leaf_CN_plot <- leaf_CN_ratio |>
+  filter(abs(LogStdValue - leaf_CN_mean) < 5 * leaf_CN_sd) |>
+  ggplot(aes(x = record_level_distance_to_biome_boundary, y = LogStdValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min, x_max) +
+  labs(x = "Distance to Biome Boundary (km)", y = "Log Leaf C:N Ratio") +
+  theme_classic()
+
+# Combine plots in one figure
+trait_relationships_plots <- plot_grid(plant_height_plot, sla_plot,
+                                       seed_mass_plot, leaf_N_plot,
+                                       leaf_CN_plot,
+                                       labels = c("a)", "b)", "c)", "d)", "e)"),
+                                       nrow = 3,
+                                       align = "hv",
+                                       axis = "tblr")
+
+
 # Display figure
-median_trait_relationships
+trait_relationships_plots
 ```
 
-## Removed value \>= 5 S.D
+## Median values per species
 
 ```{r traits-relationships-5SD}
 #| label: fig-traits-relationships-5SD
@@ -413,6 +511,88 @@ median_trait_relationships
 #| message: false
 #| warning: false
 
+# Calculate median values per species
+traits_median <- traits_biome_boundaries_with_lhs |>
+  group_by(StandardSpeciesName, TraitNameNew) |>
+  summarise(max_trait_value = max(StdValue, na.rm = TRUE),
+            MedianTraitValue = median(StdValue, na.rm = TRUE),
+            .groups = "drop")
+  
+# Add distance to biome boundaries and growth form 
+traits_median_df <- traits_median |>
+  left_join(species_growth_forms, by = "StandardSpeciesName") |>
+  left_join(biome_boundaries, by = c("StandardSpeciesName" = "species")) |>
+  rename(species_level_mean_distance_km = mean_distance_km) |>
+  filter(!is.na(species_level_mean_distance_km), !is.na(MedianTraitValue),
+         !is.na(GrowthForm))
+
+# Calculate universal x-axis limits
+x_min_species <- min(traits_median_df$species_level_mean_distance_km, na.rm = TRUE)
+x_max_species <- max(traits_median_df$species_level_mean_distance_km, na.rm = TRUE)
+
+# Plant height
+median_plant_height <- traits_median_df |>
+  filter(TraitNameNew == "PlantHeight") |>
+  ggplot(aes(x = species_level_mean_distance_km, y = MedianTraitValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min_species, x_max_species) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Plant height (cm)") +
+  theme_classic()
+
+# SLA
+median_sla <- traits_median_df |>
+  filter(TraitNameNew == "SLA") |>
+  ggplot(aes(x = species_level_mean_distance_km, y = MedianTraitValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min_species, x_max_species) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = expression("Median SLA (m"^2*"/kg)")) +
+  theme_classic()
+
+# Seed mass
+median_seed_mass <- traits_median_df |>
+  filter(TraitNameNew == "SeedMass") |>
+  ggplot(aes(x = species_level_mean_distance_km, y = MedianTraitValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min_species, x_max_species) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Seed Mass (mg)") +
+  theme_classic()
+
+# Leaf N content
+median_leaf_N <- traits_median_df |>
+  filter(TraitNameNew == "LeafN") |>
+  ggplot(aes(x = species_level_mean_distance_km, y = MedianTraitValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min_species, x_max_species) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Leaf N (mg/g)") +
+  theme_classic()
+
+# Leaf C:N ratio
+median_c_n <- traits_median_df |>
+  filter(TraitNameNew == "LeafCN") |>
+  ggplot(aes(x = species_level_mean_distance_km, y = MedianTraitValue)) +
+  geom_point() +
+  geom_smooth() +
+  xlim(x_min_species, x_max_species) +
+  labs(x = "Mean Distance to Biome Boundary (km)", y = "Median Leaf C:N Ratio") +
+  theme_classic()
+
+# Combine plots 
+median_trait_relationships <- plot_grid(median_plant_height, median_sla,
+                                        median_seed_mass, median_leaf_N,
+                                        median_c_n,
+                                        labels = c("a)", "b)", "c)", "d)", "e)"),
+                                        nrow = 3,
+                                        align = "hv",
+                                        axis = "tblr")
+
 # Display figure
-trait_relationships_plots
+median_trait_relationships
 ```
+
+## Growth form
+
+Growth forms for all species were extracted using the BIEN package and manually checked. Aquatic species were removed from our list of species. In the case of shrub/tree species, the TRY data was used to determine the typical height of the species. If height \<2m, the species was classified as a shrub. If height \>2m, the species was classified as tree.
