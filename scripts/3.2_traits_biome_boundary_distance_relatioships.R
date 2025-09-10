@@ -344,20 +344,35 @@ dispersion_test <- betadisper(vegdist(trait_matrix),
                               species_biome_classification$biome_category[species_biome_classification$StandardSpeciesName %in% rownames(trait_matrix)])
 permutest(dispersion_test)
 
-# 6. GLLVM? --------------------------------------------------------------------
+# 6. MODELS --------------------------------------------------------------------
 
-# Fit gllvm with trait_matrix and biome classifications
-gllvm_model <- gllvm(trait_matrix, 
-                     X = data.frame(biome = nmds_plot_data$biome_category),
-                     num.lv = 2,
-                     family = "gaussian",
-                     seed = 52164)
+## 6.1. Linear mixed-effects models --------------------------------------------
 
-# Compare to NMDS stress
-gllvm_model$logL
+# Filter for plant height
+plant_height_for_model <- traits_biome_boundaries |>
+  filter(TraitNameNew == "PlantHeight") |>
+  filter(!is.na(StdValue)) |>
+  mutate(site_name = paste0(LON_site, "_", LAT_site))
 
-# Extract and plot results
-ordiplot(gllvm_model, biplot = TRUE)
-coefplot(gllvm_model)  
+# Define model
+traits_lm1 <- nlme::lme(log(StdValue) ~ record_level_distance_to_biome_boundary, 
+                        random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                        data = plant_height_for_model)
+
+# Model diagnostics
+summary(traits_lm1)
+plot(traits_lm1)
+
+# Plot relationship 
+plot(plant_height_for_model$record_level_distance_to_biome_boundary, log(plant_height_for_model$StdValue))
+
+## 6.2. Segmented linear mixed effects model -----------------------------------
+
+# Define model
+plant_height_segment_lm1 <- segmented()
+
+
+
+
 
 # END OF SCRIPT ----------------------------------------------------------------
