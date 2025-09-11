@@ -352,16 +352,21 @@ permutest(dispersion_test)
 plant_height_for_model <- traits_biome_boundaries |>
   filter(TraitNameNew == "PlantHeight") |>
   filter(!is.na(StdValue)) |>
-  mutate(site_name = paste0(LON_site, "_", LAT_site))
+  mutate(site_name = paste0(LON_site, "_", LAT_site)) |>
+  filter(!StandardSpeciesName %in% c("Picea sitchensis", "Ilex aquifolium", "Prunus laurocerasus"))
 
 # Define model
 traits_lm1 <- nlme::lme(log(StdValue) ~ record_level_distance_to_biome_boundary, 
                         random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
                         data = plant_height_for_model)
 
+# Simplified lme
+traits_lm2 <- lm(log(StdValue) ~ record_level_distance_to_biome_boundary,
+                        data = plant_height_for_model)
+
 # Model diagnostics
-summary(traits_lm1)
-plot(traits_lm1)
+summary(traits_lm2)
+plot(traits_lm2)
 
 # Plot relationship 
 plot(plant_height_for_model$record_level_distance_to_biome_boundary, log(plant_height_for_model$StdValue))
@@ -369,10 +374,80 @@ plot(plant_height_for_model$record_level_distance_to_biome_boundary, log(plant_h
 ## 6.2. Segmented linear mixed effects model -----------------------------------
 
 # Define model
-plant_height_segment_lm1 <- segmented()
+traits_lm3 <- nlme::lme(log(StdValue) ~ pmin(record_level_distance_to_biome_boundary, 0)+ pmax(record_level_distance_to_biome_boundary, 0), 
+                        random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                        data = plant_height_for_model)
+
+
+summary(traits_lm3)
+plant_height_for_model$fitted <- predict(traits_lm3, level = 0)
+
+ggplot(plant_height_for_model, aes(x = record_level_distance_to_biome_boundary, y = StdValue)) +
+  geom_point() +
+  geom_line(aes(y=fitted))
+
+
+## SLA 
+# Filter for SLA
+sla_for_model <- traits_biome_boundaries |>
+  filter(TraitNameNew == "SLA") |>
+  filter(!is.na(StdValue)) |>
+  mutate(site_name = paste0(LON_site, "_", LAT_site)) |>
+  filter(!StandardSpeciesName %in% c("Picea sitchensis", "Ilex aquifolium", "Prunus laurocerasus"))
+
+
+# Define model
+sla_lm1 <- nlme::lme(log(StdValue) ~ pmin(record_level_distance_to_biome_boundary, 0)+ pmax(record_level_distance_to_biome_boundary, 0), 
+                        random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                        data = sla_for_model)
+
+# Model summary
+summary(sla_lm1)
+plot(sla_lm1)
+
+sla_for_model$fitted <- predict(sla_lm1, level = 0)
+
+ggplot(sla_for_model, aes(x = record_level_distance_to_biome_boundary, y = log(StdValue))) +
+  geom_point() +
+  geom_line(aes(y=fitted))
+
+# Segmented regression without the random effect
+sla_lm2 <- lm(log(StdValue) ~ record_level_distance_to_biome_boundary,
+              data = sla_for_model)
+
+traits_lm4 <- nlme::lme(StdValue ~ record_level_distance_to_biome_boundary, 
+                        random = ~1|site_name,
+                        data = plant_height_for_model)
 
 
 
+segmented_height_lm4 <- segmented(nlme::lme(log(StdValue) ~ record_level_distance_to_biome_boundary, 
+                                            random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                                            data = plant_height_for_model), ~record_level_distance_to_biome_boundary,
+                                  psi = 0,
+                               random = list(StandardSpeciesName = pdDiag(~1)))
+summary(segmented_height_lm4)
+plot.segmented.lme(segmented_height_lm4, level = 0)
+
+# Segmented regression without the random effect
+segmented_height_lm4 <- segmented(lm(log(StdValue) ~ record_level_distance_to_biome_boundary,
+                                            data = plant_height_for_model), ~record_level_distance_to_biome_boundary)
+
+summary(segmented_height_lm4)
+plot(segmented_height_lm4)
 
 
-# END OF SCRIPT ----------------------------------------------------------------
+summary(plant_height_lme5)
+
+plant_height_lme5 <- nlme::lme(log(StdValue) ~ record_level_distance_to_biome_boundary, 
+                               random = list(site_name = pdDiag(~1), StandardSpeciesName = pdDiag(~1)),
+                               data = plant_height_for_model)
+
+plant_segmented <- segmented.lme(nlme::lme(log(StdValue) ~ record_level_distance_to_biome_boundary, 
+                                           random = list(site_name = pdDiag(~1), StandardSpeciesName = pdDiag(~1)),
+                                           data = plant_height_for_model), seg.Z = record_level_distance_to_biome_boundary, 
+                                 random = list(site_name = pdDiag(~1), StandardSpeciesName = pdDiag(~1)),
+                                 data = plant_height_for_model)
+
+
+
