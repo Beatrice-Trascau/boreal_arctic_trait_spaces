@@ -151,3 +151,230 @@ remaining_multi_word_fixed <- global_traits3$StandardSpeciesName[
 # Remove Hieracium (again)
 global_traits4 <- global_traits3 |>
   filter(StandardSpeciesName != "Hieracium")
+
+## 2.3. Clean species names ----------------------------------------------------
+
+# This is done in accordance with the taxonomic check from script 1.2 which was
+# run on the list of species from this dataframe
+global_traits5 <- global_traits4 |>
+  mutate(StandardSpeciesName = case_when(
+    StandardSpeciesName == "Casteleja occidens" ~ "Castilleja occidentalis",
+    StandardSpeciesName == "Sausarrea angustifolium" ~ "Saussurea angustifolia",
+    StandardSpeciesName == "Spirodela polyrrhiza" ~ "Spirodela polyrhiza",
+    StandardSpeciesName == "Salix doniana" ~ "Salix purpurea",
+    StandardSpeciesName == "Silene samojedora" ~ "Silene samojedorum",
+    StandardSpeciesName == "Salix myrtifolia" ~ "Salix myrtillifolia",
+    StandardSpeciesName == "Calamagrostis purpuras" ~ "Calamagrostis purpurea",
+    StandardSpeciesName == "Pedicularis vertisilata" ~ "Pedicularis verticillata",
+    StandardSpeciesName == "Peticites frigidus" ~ "Petasites frigidus",
+    StandardSpeciesName == "Senecio atropurpuris" ~ "Senecio atropurpureus",
+    StandardSpeciesName == "Gentia glauca" ~ "Gentiana glauca",
+    StandardSpeciesName == "Polemonium acutifolium" ~ "Polemonium acutiflorum",
+    StandardSpeciesName == "Rumex lapponum" ~ "Rumex lapponicus",
+    StandardSpeciesName == "Pedicularis vertillis" ~ "Pedicularis verticillata",
+    StandardSpeciesName == "Sabulina rossii" ~ "Sabulina rosei",
+    StandardSpeciesName == "Echinops crispus" ~ "Echinops ritro",
+    StandardSpeciesName == "Salix fuscenses" ~ "Salix fuscescens",
+    StandardSpeciesName == "Salix laponicum" ~ "Salix lapponum",
+    StandardSpeciesName == "Senecio atropupuris" ~ "Senecio atropurpureus",
+    StandardSpeciesName == "Salix argyocarpon" ~ "Salix argyrocarpa",
+    StandardSpeciesName == "Salix herbaceae-polaris" ~ "Salix herbacea",
+    .default = StandardSpeciesName))
+
+# 3. ADD DISTANCE TO BIOME BOUNDARY  -------------------------------------------
+
+# Remove Elodea canadensis & hybrids
+biome_boundaries <- detailed_results |>
+  filter(!species == "Elodea canadensis")
+
+# Remove hybrids from the distance to biome boundary df
+biome_boundaries <- biome_boundaries |>
+  filter(!str_detect(species, " × "))
+
+# Combine the dataframes
+global_cleaned_traits1 <- global_traits5 |>
+  left_join(biome_boundaries, by = c("StandardSpeciesName" = "species"))
+
+# Rename column with mean distance to biome boundary to reflect the fact that
+# it is a species-level mean
+global_cleaned_traits2 <- global_cleaned_traits1 |>
+  rename(species_level_mean_distance_km = mean_distance_km)
+
+# Remove species that do not have a species level mean distance to biome boundary
+global_cleaned_traits3 <- global_cleaned_traits2 |>
+  filter(!is.na(species_level_mean_distance_km))
+
+# Save dataframe
+save(global_cleaned_traits3, file = here("data", "derived_data", "global_cleaned_traits_August2025.RData"))
+write.csv(global_cleaned_traits3, file = here("data", "derived_data", "global_cleaned_traits_August2025.csv"))
+
+# Extract species list from global_cleaned_traits3
+species_list_boreal_tundra <- global_cleaned_traits3 |>
+  distinct(StandardSpeciesName, .keep_all = TRUE) |>
+  mutate(biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+                                    species_level_mean_distance_km < 0 ~ "tundra",
+                                    TRUE ~ "boundary")) |>
+  select(c(Dataset, StandardSpeciesName, biome_category))
+
+# Write to file
+write.csv(species_list_boreal_tundra, here("data", "derived_data",
+                                           "species_list_boreal_tundra_Sept2025.csv"))
+
+# 4. NMDS ----------------------------------------------------------------------
+
+# Calculate species-level means for the traits
+traits_median <- global_cleaned_traits3 |>
+  group_by(StandardSpeciesName, TraitNameNew) |>
+  summarise(max_trait_value = max(StdValue, na.rm = TRUE),
+            MedianTraitValue = median(StdValue, na.rm = TRUE),
+            .groups = "drop")
+
+# Add distance to biome boundaries and growth form 
+traits_median_df <- traits_median |>
+  left_join(biome_boundaries, by = c("StandardSpeciesName" = "species")) |>
+  rename(species_level_mean_distance_km = mean_distance_km) |>
+  filter(!is.na(species_level_mean_distance_km), !is.na(MedianTraitValue))
+
+# Categorise species as either boreal or tundra specialists
+species_biome_classification <- traits_median_df |>
+  distinct(StandardSpeciesName, species_level_mean_distance_km) |>
+  mutate(biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+                                    species_level_mean_distance_km < 0 ~ "tundra",
+                                    TRUE ~ "boundary"))  # exactly at boundary
+
+# Save list of tundra and boreal species 
+boreal_classification <- species_biome_classification |>
+  filter(biome_category == "boreal")
+write.csv(boreal_classification, here("data", "derived_data", 
+                                      "boreal_species_classification.csv"))
+
+# Create trait values per species in wide format for NMDS
+trait_matrix <- traits_median_df |>
+  filter(StandardSpeciesName %in% species_biome_classification$StandardSpeciesName) |>
+  select(StandardSpeciesName, TraitNameNew, MedianTraitValue) |>
+  pivot_wider(names_from = TraitNameNew, 
+              values_from = MedianTraitValue) |>
+  column_to_rownames("StandardSpeciesName")
+
+
+# Create table of species that are missing values
+missing_plant_height <- trait_matrix |>
+  filter(!is.na(PlantHeight))
+missing_leaf_CN <- trait_matrix |>
+  filter(!is.na(LeafCN))
+missing_leaf_N <- trait_matrix |>
+  filter(!is.na(LeafN))
+missing_SLA <- trait_matrix |>
+  filter(!is.na(SLA))
+missing_seed_mass <- trait_matrix |>
+  filter(!is.na(SeedMass))
+
+# Remove Leaf C: N ratio
+trait_matrix <- trait_matrix |>
+  select(-LeafCN)
+
+# Remove species with missing data for any trait
+complete_trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
+
+# Check which traits are available
+colnames(complete_trait_matrix)
+
+## 5.2. Run NMDS ---------------------------------------------------------------
+
+# Set seed for NMDS
+set.seed(631234)
+
+# Run NMDS
+nmds_result <- metaMDS(complete_trait_matrix, 
+                       distance = "euclidean",
+                       k = 3,
+                       trymax = 100)
+
+# Check stress value per dimension
+dimcheck_out <- dimcheckMDS(complete_trait_matrix,
+                            distance = "bray",
+                            k = 5)
+
+## 5.3. Plot output ------------------------------------------------------------
+
+# Extract NMDS scores
+nmds_scores <- as.data.frame(nmds_result$points)
+nmds_scores$StandardSpeciesName <- rownames(nmds_scores)
+
+# Add biome classification
+nmds_plot_data <- nmds_scores |>
+  left_join(species_biome_classification, by = "StandardSpeciesName") |>
+  filter(!is.na(biome_category))
+
+# Remove P. sitchensis and I. aquifolium from nmds plot
+nmds_plot_data <- nmds_plot_data |>
+  filter(!StandardSpeciesName %in% c("Picea sitchensis", "Ilex aquifolium"))
+
+# Create polygon hull
+boreal_scores <- nmds_plot_data[nmds_plot_data$biome_category == "boreal", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
+                                                                                                    "boreal", c("MDS1", "MDS2")]), ]  # hull values for boreal
+tundra_scores <- nmds_plot_data[nmds_plot_data$biome_category == "tundra", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
+                                                                                                    "tundra", c("MDS1", "MDS2")]), ]  # hull values for grp B
+
+hull_data <- rbind(boreal_scores, tundra_scores)  #combine grp.a and grp.b
+
+
+# Create NMDS plot
+nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = biome_category)) +
+  geom_polygon(data=hull_data,aes(x=MDS1,y=MDS2,fill=biome_category,group=biome_category),alpha=0.30) +
+  geom_point(size = 2, alpha = 0.7) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                     name = "Biome") +
+  labs(x = "NMDS1", y = "NMDS2") +
+  theme_classic() +
+  theme(legend.position = "bottom") +
+  # add stress value as subtitle
+  labs(subtitle = paste("Based on", ncol(trait_matrix), "traits,", nrow(nmds_plot_data), "species"))
+  
+
+# 5. CHECK CLASSIFICATION AGAINST ABA LIST -------------------------------------
+
+# Read in ABA classification
+aba_class <- read.csv()
+
+# Rename sepcies name column 
+aba_class <- aba_class |>
+  rename(new_name = old_name)
+
+# Add aba classification based on the species name
+
+# 6. PLOT TRAIT RELATIONSHIPS --------------------------------------------------
+
+# Add biome classification
+traits_biomes <- traits_median_df |>
+  mutate(biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+                                    species_level_mean_distance_km < 0 ~ "tundra",
+                                    TRUE ~ "boundary"))
+
+# Plot sla & plant height
+sla_height <- traits_biomes |>
+  select(c("StandardSpeciesName", "TraitNameNew", "biome_category", "MedianTraitValue")) |>
+  filter(TraitNameNew %in% c("PlantHeight", "SLA")) |>
+  filter(!StandardSpeciesName %in% c("Picea sitchensis", "Ilex aquifolium"))
+
+# Convert to wide format
+sla_height_wide <- sla_height |>
+  pivot_wider(names_from = TraitNameNew, 
+              values_from = MedianTraitValue) |>
+  column_to_rownames("StandardSpeciesName") |>
+  filter(!is.na(PlantHeight) & !is.na(SLA)) |>
+  mutate(sqrt_plant_height = sqrt(PlantHeight),
+         sqrt_sla = sqrt(SLA))
+
+# Plot 
+p1<- ggplot(sla_height_wide, aes(x=sqrt_plant_height, y=sqrt_sla, 
+                                 color=biome_category)) +
+  geom_point() +
+  theme_classic() +
+  theme(legend.position="right")
+
+ggMarginal(p1, groupColour = TRUE, groupFill = TRUE)
+
+
+
+
