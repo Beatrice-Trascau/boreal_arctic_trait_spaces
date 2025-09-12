@@ -257,4 +257,262 @@ outside_indices_polar <- setdiff(all_indices_polar, c(boreal_indices_polar, tund
 # ggsave(filename = here("figures", "FigureS1_biomes_and_all_points.png"),
 #        plot = biomes_polar_proj, width = 16, height = 12, dpi = 300)
 
+## 6.3. Maps with biomes and Plant Height datapoints ---------------------------
+
+# Keep only plant height records
+plant_height_records <- try_sf_polar |>
+  filter(TraitNameNew == "PlantHeight")
+
+# Recalculate intersections using the polar-projected data to ensure consistency
+ph_boreal_try_polar <- st_intersects(plant_height_records, boreal_forest_polar)
+ph_tundra_try_polar <- st_intersects(plant_height_records, tundra_polar)
+
+# Convert to regular indices
+ph_boreal_indices_polar <- which(lengths(ph_boreal_try_polar) > 0)
+ph_tundra_indices_polar <- which(lengths(ph_tundra_try_polar) > 0)
+
+# Get indices for points outside both biomes
+ph_all_indices_polar <- 1:nrow(plant_height_records)
+ph_outside_indices_polar <- setdiff(ph_all_indices_polar, 
+                                    c(ph_boreal_indices_polar, ph_tundra_indices_polar))
+
+# Create map
+(plant_height_points <- ggplot() +
+    # add biomes
+    geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA) +
+    # add country outlines
+    geom_sf(data = world_polar, fill = NA, color = "darkgray", size = 0.2) +
+    # add points
+    geom_sf(data = plant_height_records[ph_outside_indices_polar,], aes(color = "Outside Target Biomes"), size = 0.8, alpha = 0.5) +
+    geom_sf(data = plant_height_records[ph_boreal_indices_polar,], aes(color = "Inside Boreal Forest Biome"), size = 0.8, alpha = 0.7) +
+    geom_sf(data = plant_height_records[ph_tundra_indices_polar,], aes(color = "Inside Tundra Biome"), size = 0.8, alpha = 0.7) +
+    # set extent
+    coord_sf(crs = proj_choice, 
+             ylim = c(-703086, 7071423), 
+             xlim = c(-505347.4, 8526158)) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          legend.position = "none",
+          plot.title = element_text(face = "bold"),
+          panel.grid.major = element_line(color = "gray90", linetype = "dashed"),
+          panel.grid.minor = element_blank()) +
+    # add custome legend for points
+    scale_color_manual(values = c("Inside Boreal Forest Biome" = "black", 
+                                  "Inside Tundra Biome" = "#2121C7", 
+                                  "Outside Target Biomes" = "#8B5F65")) +
+    # add custom colours and legend values
+    scale_fill_manual(values = mycols,
+                      labels = c("Boreal Forest Biome", "Tundra Biome"),
+                      name = "Biome") +
+    # change legends size
+    guides(fill = guide_legend(title = "Biome"),
+           color = guide_legend(title = "Records",
+                                override.aes = list(size = 2.5))))
+
+## 6.4. Map with biomes and SLA points -----------------------------------------
+
+# Keep only sla records
+sla_records <- try_sf_polar |>
+  filter(TraitNameNew == "SLA")
+
+# Recalculate intersections using the polar-projected data to ensure consistency
+sla_boreal_try_polar <- st_intersects(sla_records, boreal_forest_polar)
+sla_tundra_try_polar <- st_intersects(sla_records, tundra_polar)
+
+# Convert to regular indices
+sla_boreal_indices_polar <- which(lengths(sla_boreal_try_polar) > 0)
+sla_tundra_indices_polar <- which(lengths(sla_tundra_try_polar) > 0)
+
+# Get indices for points outside both biomes
+sla_all_indices_polar <- 1:nrow(sla_records)
+sla_outside_indices_polar <- setdiff(sla_all_indices_polar, 
+                                    c(sla_boreal_indices_polar, sla_tundra_indices_polar))
+
+# Create map
+(sla_points <- ggplot() +
+    # add biomes
+    geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA) +
+    # add country outlines
+    geom_sf(data = world_polar, fill = NA, color = "darkgray", size = 0.2) +
+    # add points
+    geom_sf(data = sla_records[sla_outside_indices_polar,], aes(color = "Outside Target Biomes"), size = 0.8, alpha = 0.5) +
+    geom_sf(data = sla_records[sla_boreal_indices_polar,], aes(color = "Inside Boreal Forest Biome"), size = 0.8, alpha = 0.7) +
+    geom_sf(data = sla_records[sla_tundra_indices_polar,], aes(color = "Inside Tundra Biome"), size = 0.8, alpha = 0.7) +
+    # set extent
+    coord_sf(crs = proj_choice, 
+             ylim = c(-703086, 7071423), 
+             xlim = c(-505347.4, 8526158)) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          legend.position = "none",
+          plot.title = element_text(face = "bold"),
+          panel.grid.major = element_line(color = "gray90", linetype = "dashed"),
+          panel.grid.minor = element_blank()) +
+    # add custome legend for points
+    scale_color_manual(values = c("Inside Boreal Forest Biome" = "black", 
+                                  "Inside Tundra Biome" = "#2121C7", 
+                                  "Outside Target Biomes" = "#8B5F65")) +
+    # add custom colours and legend values
+    scale_fill_manual(values = mycols,
+                      labels = c("Boreal Forest Biome", "Tundra Biome"),
+                      name = "Biome") +
+    # change legends size
+    guides(fill = guide_legend(title = "Biome"),
+           color = guide_legend(title = "Records",
+                                override.aes = list(size = 2.5))))
+
+## 6.5. Map with biomes and Seed Mass points -----------------------------------------
+
+# Keep only sla records
+seed_mass_records <- try_sf_polar |>
+  filter(TraitNameNew == "SeedMass")
+
+# Recalculate intersections using the polar-projected data to ensure consistency
+seed_mass_boreal_try_polar <- st_intersects(seed_mass_records, boreal_forest_polar)
+seed_mass_tundra_try_polar <- st_intersects(seed_mass_records, tundra_polar)
+
+# Convert to regular indices
+seed_mass_boreal_indices_polar <- which(lengths(seed_mass_boreal_try_polar) > 0)
+seed_mass_tundra_indices_polar <- which(lengths(seed_mass_tundra_try_polar) > 0)
+
+# Get indices for points outside both biomes
+seed_mass_all_indices_polar <- 1:nrow(seed_mass_records)
+seed_mass_outside_indices_polar <- setdiff(seed_mass_all_indices_polar, 
+                                     c(seed_mass_boreal_indices_polar, 
+                                       seed_mass_tundra_indices_polar))
+
+# Create map
+(seed_mass_points <- ggplot() +
+    # add biomes
+    geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA) +
+    # add country outlines
+    geom_sf(data = world_polar, fill = NA, color = "darkgray", size = 0.2) +
+    # add points
+    geom_sf(data = seed_mass_records[seed_mass_outside_indices_polar,], aes(color = "Outside Target Biomes"), size = 0.8, alpha = 0.5) +
+    geom_sf(data = seed_mass_records[seed_mass_boreal_indices_polar,], aes(color = "Inside Boreal Forest Biome"), size = 0.8, alpha = 0.7) +
+    geom_sf(data = seed_mass_records[seed_mass_tundra_indices_polar,], aes(color = "Inside Tundra Biome"), size = 0.8, alpha = 0.7) +
+    # set extent
+    coord_sf(crs = proj_choice, 
+             ylim = c(-703086, 7071423), 
+             xlim = c(-505347.4, 8526158)) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          legend.position = "none",
+          plot.title = element_text(face = "bold"),
+          panel.grid.major = element_line(color = "gray90", linetype = "dashed"),
+          panel.grid.minor = element_blank()) +
+    # add custome legend for points
+    scale_color_manual(values = c("Inside Boreal Forest Biome" = "black", 
+                                  "Inside Tundra Biome" = "#2121C7", 
+                                  "Outside Target Biomes" = "#8B5F65")) +
+    # add custom colours and legend values
+    scale_fill_manual(values = mycols,
+                      labels = c("Boreal Forest Biome", "Tundra Biome"),
+                      name = "Biome") +
+    # change legends size
+    guides(fill = guide_legend(title = "Biome"),
+           color = guide_legend(title = "Records",
+                                override.aes = list(size = 2.5))))
+
+## 6.6. Map with biomes and Leaf N points -----------------------------------------
+
+# Keep only sla records
+leafN_records <- try_sf_polar |>
+  filter(TraitNameNew == "LeafN")
+
+# Recalculate intersections using the polar-projected data to ensure consistency
+leafN_boreal_try_polar <- st_intersects(leafN_records, boreal_forest_polar)
+leafN_tundra_try_polar <- st_intersects(leafN_records, tundra_polar)
+
+# Convert to regular indices
+leafN_boreal_indices_polar <- which(lengths(leafN_boreal_try_polar) > 0)
+leafN_tundra_indices_polar <- which(lengths(leafN_tundra_try_polar) > 0)
+
+# Get indices for points outside both biomes
+leafN_all_indices_polar <- 1:nrow(leafN_records)
+leafN_outside_indices_polar <- setdiff(leafN_all_indices_polar,
+                                       c(leafN_boreal_indices_polar,
+                                         leafN_tundra_indices_polar))
+
+# Create map
+(leafN_points <- ggplot() +
+    # add biomes
+    geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA) +
+    # add country outlines
+    geom_sf(data = world_polar, fill = NA, color = "darkgray", size = 0.2) +
+    # add points
+    geom_sf(data = leafN_records[leafN_outside_indices_polar,], aes(color = "Outside Target Biomes"), size = 0.8, alpha = 0.5) +
+    geom_sf(data = leafN_records[leafN_boreal_indices_polar,], aes(color = "Inside Boreal Forest Biome"), size = 0.8, alpha = 0.7) +
+    geom_sf(data = leafN_records[leafN_tundra_indices_polar,], aes(color = "Inside Tundra Biome"), size = 0.8, alpha = 0.7) +
+    # set extent
+    coord_sf(crs = proj_choice, 
+             ylim = c(-703086, 7071423), 
+             xlim = c(-505347.4, 8526158)) +
+    theme_bw() +
+    theme(axis.text.x = element_blank(),
+          axis.text.y = element_blank(),
+          legend.position = "none",
+          plot.title = element_text(face = "bold"),
+          panel.grid.major = element_line(color = "gray90", linetype = "dashed"),
+          panel.grid.minor = element_blank()) +
+    # add custome legend for points
+    scale_color_manual(values = c("Inside Boreal Forest Biome" = "black", 
+                                  "Inside Tundra Biome" = "#2121C7", 
+                                  "Outside Target Biomes" = "#8B5F65")) +
+    # add custom colours and legend values
+    scale_fill_manual(values = mycols,
+                      labels = c("Boreal Forest Biome", "Tundra Biome"),
+                      name = "Biome") +
+    # change legends size
+    guides(fill = guide_legend(title = "Biome"),
+           color = guide_legend(title = "Records",
+                                override.aes = list(size = 2.5))))
+
+## 6.7. Combine all maps into single figure ------------------------------------
+
+# Create dummy plot to extract legend
+dummy_plot <- ggplot() +
+  # add biomes
+  geom_sf(data = biome_data, aes(fill = factor(BIOME)), color = NA) +
+  geom_point(data = data.frame(x = c(1, 2, 3), y = c(1, 2, 3), 
+                               type = c("Inside Boreal Forest Biome", "Inside Tundra Biome", "Outside Target Biomes")),
+             aes(x = x, y = y, color = type), size = 3, alpha = 0.8) +
+  scale_color_manual(values = c("Inside Boreal Forest Biome" = "black", 
+                                "Inside Tundra Biome" = "#2121C7", 
+                                "Outside Target Biomes" = "#8B5F65")) +
+  # add the same scale_fill_manual as your maps
+  scale_fill_manual(values = mycols, 
+                    labels = c("Boreal Forest Biome", "Tundra Biome"),
+                    name = "Biomes") +
+  theme_void() +
+  theme(legend.text = element_text(size = 11),
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.spacing.y = unit(0.3, "cm")) +
+  guides(fill = guide_legend(title = "Biomes", 
+                             order = 1,
+                             override.aes = list(alpha = 0.8, size = 0)),
+         color = guide_legend(title = "Records", order = 2,
+                              override.aes = list(size = 3, alpha = 0.8)))
+
+# Extract legend from dummy plot
+combined_legend <- get_legend(dummy_plot)
+
+# Combine all maps into single panel
+all_maps_with_legend <- plot_grid(plot_grid(plant_height_points, sla_points, 
+                             seed_mass_points, leafN_points,
+                             labels = c("Plant Height", "SLA", "Seed Mass", "Leaf N"),
+                             ncol = 2, nrow = 2),
+                             # add legend
+                             combined_legend,
+                             # adjust relative widths - 80% for plots, 20% for legend
+                             rel_widths = c(0.8, 0.2),
+                             ncol = 2)
+
+# Save figure
+ggsave(filename = here("figures", "FigureS2_biomes_points_trati_breakdown.png"),
+       plot = all_maps_with_legend, width = 16, height = 12, dpi = 300)
+
 # END OF SCRIPT ----------------------------------------------------------------
