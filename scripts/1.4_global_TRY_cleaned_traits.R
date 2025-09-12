@@ -20,6 +20,10 @@ try_raw <- try.final.control
 detailed_results <- readRDS(here("data", "derived_data", 
                                  "species_summaries_dist_to_biome_boundary_June25.rds"))
 
+# Load CAFF quality check
+caff_check <- read.xlsx(here("data", "derived_data", "caff_quality_check.xlsx"),
+                        sheet = 1, skipEmptyRows = TRUE)
+
 # 2. CLEAN SPECIES NAMES -------------------------------------------------------
 
 ## 2.1. Remove morphospecies and subspecies ------------------------------------
@@ -220,11 +224,39 @@ species_list_boreal_tundra <- global_cleaned_traits3 |>
 write.csv(species_list_boreal_tundra, here("data", "derived_data",
                                            "species_list_boreal_tundra_Sept2025.csv"))
 
+# 4. CLASSIFICATION QUALITY CONTROL --------------------------------------------
+
+# Check columns of dfs
+colnames(global_cleaned_traits3)
+colnames(caff_check)
+
+# Change species name column to match the cleaned traits
+caff_check <- caff_check |>
+  rename(StandardSpeciesName = SPECIES_CLEAN)
+
+# Add CAFF classification to the dataframe of cleaned traits
+caff_global_cleaned_traits <- global_cleaned_traits3 |>
+  left_join(caff_check |> select(StandardSpeciesName, final.category), 
+            by = "StandardSpeciesName")
+
+# Create colum with the corrected classification
+caff_global_cleaned_traits2 <- caff_global_cleaned_traits |>
+  # create new column with the caff category and log-transform values
+  mutate(caff_biome_category = final.category) |>
+  filter(!caff_biome_category == "remove")
+
 # 4. NMDS ----------------------------------------------------------------------
 
-# Calculate species-level means for the traits
-traits_median <- global_cleaned_traits3 |>
+# Check filtering
+trial <- caff_global_cleaned_traits2 |>
   group_by(StandardSpeciesName, TraitNameNew) |>
+  mutate(number_of_records = length(StdValue)) 
+
+# Calculate species-level means for the traits
+traits_median <- caff_global_cleaned_traits2 |>
+  group_by(StandardSpeciesName, TraitNameNew) |>
+  mutate(number_of_records = length(StdValue)) |>
+  filter(number_of_records > 4) |>
   summarise(max_trait_value = max(StdValue, na.rm = TRUE),
             MedianTraitValue = median(StdValue, na.rm = TRUE),
             .groups = "drop")
@@ -233,41 +265,28 @@ traits_median <- global_cleaned_traits3 |>
 traits_median_df <- traits_median |>
   left_join(biome_boundaries, by = c("StandardSpeciesName" = "species")) |>
   rename(species_level_mean_distance_km = mean_distance_km) |>
-  filter(!is.na(species_level_mean_distance_km), !is.na(MedianTraitValue))
+  filter(!is.na(species_level_mean_distance_km), !is.na(MedianTraitValue)) |>
+  mutate(log_median_trait_value = log(MedianTraitValue))
 
 # Categorise species as either boreal or tundra specialists
 species_biome_classification <- traits_median_df |>
   distinct(StandardSpeciesName, species_level_mean_distance_km) |>
-  mutate(biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+  mutate(pipeline_biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
                                     species_level_mean_distance_km < 0 ~ "tundra",
                                     TRUE ~ "boundary"))  # exactly at boundary
 
 # Save list of tundra and boreal species 
-boreal_classification <- species_biome_classification |>
-  filter(biome_category == "boreal")
-write.csv(boreal_classification, here("data", "derived_data", 
-                                      "boreal_species_classification.csv"))
+# boreal_classification <- species_biome_classification |>
+#   filter(biome_category == "boreal")
+# write.csv(boreal_classification, here("data", "derived_data", 
+#                                       "boreal_species_classification.csv"))
 
 # Create trait values per species in wide format for NMDS
 trait_matrix <- traits_median_df |>
-  filter(StandardSpeciesName %in% species_biome_classification$StandardSpeciesName) |>
-  select(StandardSpeciesName, TraitNameNew, MedianTraitValue) |>
+  select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
   pivot_wider(names_from = TraitNameNew, 
-              values_from = MedianTraitValue) |>
+              values_from = log_median_trait_value) |>
   column_to_rownames("StandardSpeciesName")
-
-
-# Create table of species that are missing values
-missing_plant_height <- trait_matrix |>
-  filter(!is.na(PlantHeight))
-missing_leaf_CN <- trait_matrix |>
-  filter(!is.na(LeafCN))
-missing_leaf_N <- trait_matrix |>
-  filter(!is.na(LeafN))
-missing_SLA <- trait_matrix |>
-  filter(!is.na(SLA))
-missing_seed_mass <- trait_matrix |>
-  filter(!is.na(SeedMass))
 
 # Remove Leaf C: N ratio
 trait_matrix <- trait_matrix |>
@@ -277,12 +296,12 @@ trait_matrix <- trait_matrix |>
 complete_trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
 
 # Check which traits are available
-colnames(complete_trait_matrix)
+View(complete_trait_matrix)
 
 ## 5.2. Run NMDS ---------------------------------------------------------------
 
 # Set seed for NMDS
-set.seed(631234)
+set.seed(84145)
 
 # Run NMDS
 nmds_result <- metaMDS(complete_trait_matrix, 
@@ -292,8 +311,8 @@ nmds_result <- metaMDS(complete_trait_matrix,
 
 # Check stress value per dimension
 dimcheck_out <- dimcheckMDS(complete_trait_matrix,
-                            distance = "bray",
-                            k = 5)
+                            distance = "euclidean",
+                            k = 4)
 
 ## 5.3. Plot output ------------------------------------------------------------
 
@@ -301,27 +320,28 @@ dimcheck_out <- dimcheckMDS(complete_trait_matrix,
 nmds_scores <- as.data.frame(nmds_result$points)
 nmds_scores$StandardSpeciesName <- rownames(nmds_scores)
 
+# Extract biome classification
+caff_biomes <- caff_global_cleaned_traits2 |>
+  select(StandardSpeciesName, caff_biome_category) |>
+  distinct(StandardSpeciesName, .keep_all = TRUE)
+
 # Add biome classification
 nmds_plot_data <- nmds_scores |>
-  left_join(species_biome_classification, by = "StandardSpeciesName") |>
-  filter(!is.na(biome_category))
+  left_join(caff_biomes, by = "StandardSpeciesName") |>
+  filter(!is.na(caff_biome_category))
 
-# Remove P. sitchensis and I. aquifolium from nmds plot
-nmds_plot_data <- nmds_plot_data |>
-  filter(!StandardSpeciesName %in% c("Picea sitchensis", "Ilex aquifolium"))
 
-# Create polygon hull
-boreal_scores <- nmds_plot_data[nmds_plot_data$biome_category == "boreal", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
+# Get polygon hull from borel and tundra
+boreal_scores <- nmds_plot_data[nmds_plot_data$caff_biome_category == "boreal", ][chull(nmds_plot_data[nmds_plot_data$caff_biome_category == 
                                                                                                     "boreal", c("MDS1", "MDS2")]), ]  # hull values for boreal
-tundra_scores <- nmds_plot_data[nmds_plot_data$biome_category == "tundra", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
+tundra_scores <- nmds_plot_data[nmds_plot_data$caff_biome_category == "tundra", ][chull(nmds_plot_data[nmds_plot_data$caff_biome_category == 
                                                                                                     "tundra", c("MDS1", "MDS2")]), ]  # hull values for grp B
-
+# Combine into one hull
 hull_data <- rbind(boreal_scores, tundra_scores)  #combine grp.a and grp.b
 
-
 # Create NMDS plot
-nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = biome_category)) +
-  geom_polygon(data=hull_data,aes(x=MDS1,y=MDS2,fill=biome_category,group=biome_category),alpha=0.30) +
+(nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = caff_biome_category)) +
+  geom_polygon(data=hull_data,aes(x=MDS1,y=MDS2,fill=caff_biome_category,group=caff_biome_category),alpha=0.30) +
   geom_point(size = 2, alpha = 0.7) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
                      name = "Biome") +
@@ -329,19 +349,85 @@ nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = biome_catego
   theme_classic() +
   theme(legend.position = "bottom") +
   # add stress value as subtitle
-  labs(subtitle = paste("Based on", ncol(trait_matrix), "traits,", nrow(nmds_plot_data), "species"))
+  labs(subtitle = paste("Based on", ncol(trait_matrix), "traits,", nrow(nmds_plot_data), "species")))
   
+# Fit trait vectors to the NMDS ordination
+trait_fit <- envfit(nmds_result, complete_trait_matrix, permutations = 999, na.rm = TRUE)
 
-# 5. CHECK CLASSIFICATION AGAINST ABA LIST -------------------------------------
+# Extract the vectors
+trait_vectors <- as.data.frame(scores(trait_fit, "vectors"))
+trait_vectors$trait <- rownames(trait_vectors)
 
-# Read in ABA classification
-aba_class <- read.csv()
+# Check significance of vectors
+print(trait_fit)
 
-# Rename sepcies name column 
-aba_class <- aba_class |>
-  rename(new_name = old_name)
+# Plot NMDS with hull and vectors
+(nmds_plot_with_proper_vectors <- nmds_plot +
+  geom_segment(data = trait_vectors, 
+               aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2),
+               arrow = arrow(length = unit(0.3, "cm")), 
+               color = "black", 
+               size = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = trait_vectors,
+            aes(x = NMDS1 * 1.1, y = NMDS2 * 1.1, label = trait),
+            color = "black", 
+            size = 3, 
+            fontface = "bold",
+            inherit.aes = FALSE))
 
-# Add aba classification based on the species name
+# 5. NMDS WITHOUT SEED MASS ----------------------------------------------------
+
+# Remove seed mass from list of traits
+seedless_traits <- trait_matrix |>
+  select(-SeedMass)
+
+# Remove species with missing data for any trait
+seedless_complete_trait_matrix <- seedless_traits[complete.cases(seedless_traits), ]
+
+# Set seed for NMDS
+set.seed(12345)
+
+# Run NMDS
+seedless_nmds_result <- metaMDS(seedless_complete_trait_matrix, 
+                       distance = "euclidean",
+                       k = 3,
+                       trymax = 100)
+
+# Check stress value per dimension
+seedless_dimcheck_out <- dimcheckMDS(seedless_complete_trait_matrix,
+                            distance = "euclidean",
+                            k = 3)
+
+# Extract NMDS scores
+seedless_nmds_scores <- as.data.frame(seedless_nmds_result$points)
+seedless_nmds_scores$StandardSpeciesName <- rownames(seedless_nmds_scores)
+
+# Add biome classification
+seedless_nmds_plot_data <- seedless_nmds_scores |>
+  left_join(caff_biomes, by = "StandardSpeciesName") |>
+  filter(!is.na(caff_biome_category))
+
+# Get polygon hull from borel and tundra
+seedless_boreal_scores <- seedless_nmds_plot_data[seedless_nmds_plot_data$caff_biome_category == "boreal", ][chull(seedless_nmds_plot_data[seedless_nmds_plot_data$caff_biome_category == 
+                                                                                                         "boreal", c("MDS1", "MDS2")]), ]  # hull values for boreal
+seedless_tundra_scores <- seedless_nmds_plot_data[seedless_nmds_plot_data$caff_biome_category == "tundra", ][chull(seedless_nmds_plot_data[seedless_nmds_plot_data$caff_biome_category == 
+                                                                                                         "tundra", c("MDS1", "MDS2")]), ]  # hull values for grp B
+# Combine into one hull
+seedless_hull_data <- rbind(seedless_boreal_scores, seedless_tundra_scores) 
+
+# Create NMDS plot
+(seedless_nmds_plot <- ggplot(seedless_nmds_plot_data, aes(x = MDS1, y = MDS2, color = caff_biome_category)) +
+    geom_polygon(data=seedless_hull_data,aes(x=MDS1,y=MDS2,fill=caff_biome_category,group=caff_biome_category),alpha=0.30) +
+    geom_point(size = 2, alpha = 0.7) +
+    scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                       name = "Biome") +
+    labs(x = "NMDS1", y = "NMDS2") +
+    theme_classic() +
+    theme(legend.position = "bottom") +
+    # add stress value as subtitle
+    labs(subtitle = paste("Based on", ncol(seedless_complete_trait_matrix), "traits,", nrow(seedless_nmds_plot_data), "species")))
+
 
 # 6. PLOT TRAIT RELATIONSHIPS --------------------------------------------------
 
