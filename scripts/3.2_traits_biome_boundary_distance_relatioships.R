@@ -21,6 +21,10 @@ detailed_results <- readRDS(here("data", "derived_data",
 global_biomes <- st_read(here("data", "raw_data", "biomes", 
                                              "wwf_terr_ecos.shp"))
 
+# Load CAFF quality check
+caff_check <- read.xlsx(here("data", "derived_data", "caff_quality_check.xlsx"),
+                        sheet = 1, skipEmptyRows = TRUE)
+
 ## 1.2. Prepare biomes ---------------------------------------------------------
 
 # Load Boreal Forest (BIOME = 6)
@@ -170,86 +174,84 @@ traits_biome_boundaries_with_lhs <- traits_biome_boundaries |>
 
 # 3. CLEAN GROWTH FORMS --------------------------------------------------------
 
-# Check how many growth forms there are
-unique(traits_biome_boundaries$GrowthForm)
+# 4. CLASSIFICATION QUALITY CONTROL --------------------------------------------
 
-# Create function to search by species
-species_trait_summary <- function(StandardSpeciesName) {
-  traits_biome_boundaries_with_lhs |>
-    filter(StandardSpeciesName == !!StandardSpeciesName) |>
-    count(TraitNameNew, name = "n_records") |>
-    arrange(desc(n_records)) |>
-    mutate(species = StandardSpeciesName) |>
-    select(species, TraitNameNew, n_records)
-}
+# Check columns of dfs
+colnames(traits_biome_boundaries_with_lhs)
+colnames(caff_check)
 
-# Check species summary
-species_trait_summary("Alchemilla alpina")
-species_trait_summary("Pinus sylvestris")
+# Change species name column to match the cleaned traits
+caff_check <- caff_check |>
+  rename(StandardSpeciesName = SPECIES_CLEAN)
 
-# Function to get summary for any growth form
-growthform_trait_summary <- function(growth_form) {
-  traits_biome_boundaries_with_lhs |>
-    filter(GrowthForm == !!growth_form) |>
-    count(TraitNameNew, name = "n_records") |>
-    arrange(desc(n_records)) |>
-    mutate(growth_form = growth_form) |>
-    select(growth_form, TraitNameNew, n_records)
-}
+# Add CAFF classification to the dataframe of cleaned traits
+caff_cleaned_traits <- traits_biome_boundaries_with_lhs |>
+  left_join(caff_check |> select(StandardSpeciesName, final.category), 
+            by = "StandardSpeciesName")
 
-# Usage examples:
-growthform_trait_summary("Tree")
+# Create colum with the corrected classification
+caff_cleaned_traits2 <- caff_cleaned_traits |>
+  # create new column with the caff category and log-transform values
+  mutate(caff_biome_category = final.category) |>
+  filter(!caff_biome_category == "remove")
 
-# Determine most common growth form per species
-species_growth_forms <- traits_biome_boundaries_with_lhs |>
-  filter(!is.na(GrowthForm)) |>
-  group_by(StandardSpeciesName, GrowthForm) |>
-  summarise(count = n(), .groups = "drop") |>
-  group_by(StandardSpeciesName) |>
-  slice_max(count, n = 1, with_ties = FALSE) |>
-  select(StandardSpeciesName, GrowthForm)
+# 4. NMDS ----------------------------------------------------------------------
 
-# 5. NMDS ----------------------------------------------------------------------
+# Check filtering
+trial <- caff_cleaned_traits2 |>
+  group_by(StandardSpeciesName, TraitNameNew) |>
+  mutate(number_of_records = length(StdValue)) 
 
-## 5.1. Prepare data for NMDS --------------------------------------------------
+# Calculate species-level means for the traits
+traits_median <- caff_cleaned_traits2 |>
+  group_by(StandardSpeciesName, TraitNameNew) |>
+  mutate(number_of_records = length(StdValue)) |>
+  filter(number_of_records > 4) |>
+  summarise(max_trait_value = max(StdValue, na.rm = TRUE),
+            MedianTraitValue = median(StdValue, na.rm = TRUE),
+            .groups = "drop")
+
+# Add distance to biome boundaries and growth form 
+traits_median_df <- traits_median |>
+  left_join(biome_boundaries, by = c("StandardSpeciesName" = "species")) |>
+  rename(species_level_mean_distance_km = mean_distance_km) |>
+  filter(!is.na(species_level_mean_distance_km), !is.na(MedianTraitValue)) |>
+  mutate(log_median_trait_value = log(MedianTraitValue))
 
 # Categorise species as either boreal or tundra specialists
 species_biome_classification <- traits_median_df |>
   distinct(StandardSpeciesName, species_level_mean_distance_km) |>
-  mutate(biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
-                                    species_level_mean_distance_km < 0 ~ "tundra",
-                                    TRUE ~ "boundary"))  # exactly at boundary
+  mutate(pipeline_biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+                                             species_level_mean_distance_km < 0 ~ "tundra",
+                                             TRUE ~ "boundary"))  # exactly at boundary
+
+# Save list of tundra and boreal species 
+# boreal_classification <- species_biome_classification |>
+#   filter(biome_category == "boreal")
+# write.csv(boreal_classification, here("data", "derived_data", 
+#                                       "boreal_species_classification.csv"))
 
 # Create trait values per species in wide format for NMDS
 trait_matrix <- traits_median_df |>
-  filter(StandardSpeciesName %in% species_biome_classification$StandardSpeciesName) |>
-  select(StandardSpeciesName, TraitNameNew, MedianTraitValue) |>
+  select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
   pivot_wider(names_from = TraitNameNew, 
-              values_from = MedianTraitValue) |>
+              values_from = log_median_trait_value) |>
   column_to_rownames("StandardSpeciesName")
 
-# Create table of species that are missing values
-missing_plant_height <- trait_matrix |>
-  filter(is.na(PlantHeight))
-missing_leaf_CN <- trait_matrix |>
-  filter(is.na(LeafCN))
-missing_leaf_N <- trait_matrix |>
-  filter(is.na(LeafN))
-missing_SLA <- trait_matrix |>
-  filter(is.na(SLA))
-missing_seed_mass <- trait_matrix |>
-  filter(is.na(SeedMass))
+# Remove Leaf C: N ratio
+trait_matrix <- trait_matrix |>
+  select(-LeafCN)
 
 # Remove species with missing data for any trait
 complete_trait_matrix <- trait_matrix[complete.cases(trait_matrix), ]
 
 # Check which traits are available
-colnames(complete_trait_matrix)
+View(complete_trait_matrix)
 
 ## 5.2. Run NMDS ---------------------------------------------------------------
 
 # Set seed for NMDS
-set.seed(53135)
+set.seed(31456)
 
 # Run NMDS
 nmds_result <- metaMDS(complete_trait_matrix, 
@@ -257,13 +259,10 @@ nmds_result <- metaMDS(complete_trait_matrix,
                        k = 3,
                        trymax = 100)
 
-# Check stress value (should be < 0.2, ideally < 0.1)
-nmds_result$stress # 0.04216575
-
 # Check stress value per dimension
 dimcheck_out <- dimcheckMDS(complete_trait_matrix,
-                            distance = "bray",
-                            k = 5)
+                            distance = "euclidean",
+                            k = 4)
 
 ## 5.3. Plot output ------------------------------------------------------------
 
@@ -271,43 +270,39 @@ dimcheck_out <- dimcheckMDS(complete_trait_matrix,
 nmds_scores <- as.data.frame(nmds_result$points)
 nmds_scores$StandardSpeciesName <- rownames(nmds_scores)
 
+# Extract biome classification
+caff_biomes <- caff_cleaned_traits2 |>
+  select(StandardSpeciesName, caff_biome_category) |>
+  distinct(StandardSpeciesName, .keep_all = TRUE)
+
 # Add biome classification
 nmds_plot_data <- nmds_scores |>
-  left_join(species_biome_classification, by = "StandardSpeciesName") |>
-  filter(!is.na(biome_category))
+  left_join(caff_biomes, by = "StandardSpeciesName") |>
+  filter(!is.na(caff_biome_category))
 
-# Create polygon hull
-boreal_scores <- nmds_plot_data[nmds_plot_data$biome_category == "boreal", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
-                                                                           "boreal", c("MDS1", "MDS2")]), ]  # hull values for boreal
-tundra_scores <- nmds_plot_data[nmds_plot_data$biome_category == "tundra", ][chull(nmds_plot_data[nmds_plot_data$biome_category == 
-                                                                   "tundra", c("MDS1", "MDS2")]), ]  # hull values for grp B
 
+# Get polygon hull from borel and tundra
+boreal_scores <- nmds_plot_data[nmds_plot_data$caff_biome_category == "boreal", ][chull(nmds_plot_data[nmds_plot_data$caff_biome_category == 
+                                                                                                         "boreal", c("MDS1", "MDS2")]), ]  # hull values for boreal
+tundra_scores <- nmds_plot_data[nmds_plot_data$caff_biome_category == "tundra", ][chull(nmds_plot_data[nmds_plot_data$caff_biome_category == 
+                                                                                                         "tundra", c("MDS1", "MDS2")]), ]  # hull values for grp B
+# Combine into one hull
 hull_data <- rbind(boreal_scores, tundra_scores)  #combine grp.a and grp.b
-hull.data
 
 # Create NMDS plot
-nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = biome_category)) +
-  geom_polygon(data=hull_data,aes(x=MDS1,y=MDS2,fill=biome_category,group=biome_category),alpha=0.30) +
-  geom_point(size = 2, alpha = 0.7) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "skyblue"),
-                     name = "Biome") +
-  labs(x = "NMDS1", y = "NMDS2") +
-  theme_classic() +
-  theme(legend.position = "bottom") +
-  # add stress value as subtitle
-  labs(subtitle = paste("Based on", ncol(trait_matrix), "traits,", nrow(nmds_plot_data), "species"))
-
-# Add ellipses around each group
-nmds_plot_with_hulls <- nmds_plot +
-  stat_ellipse(aes(fill = biome_category), alpha = 0.2, geom = "polygon",
-               level = 0.95) +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "skyblue"),
-                    guide = "none")
-
-## 5.4. Plot output with trait vectors -----------------------------------------
+(nmds_plot <- ggplot(nmds_plot_data, aes(x = MDS1, y = MDS2, color = caff_biome_category)) +
+    geom_polygon(data=hull_data,aes(x=MDS1,y=MDS2,fill=caff_biome_category,group=caff_biome_category),alpha=0.30) +
+    geom_point(size = 2, alpha = 0.7) +
+    scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                       name = "Biome") +
+    labs(x = "NMDS1", y = "NMDS2") +
+    theme_classic() +
+    theme(legend.position = "bottom") +
+    # add stress value as subtitle
+    labs(subtitle = paste("Based on", ncol(trait_matrix), "traits,", nrow(nmds_plot_data), "species")))
 
 # Fit trait vectors to the NMDS ordination
-trait_fit <- envfit(nmds_result, trait_matrix, permutations = 999)
+trait_fit <- envfit(nmds_result, complete_trait_matrix, permutations = 999, na.rm = TRUE)
 
 # Extract the vectors
 trait_vectors <- as.data.frame(scores(trait_fit, "vectors"))
@@ -316,20 +311,20 @@ trait_vectors$trait <- rownames(trait_vectors)
 # Check significance of vectors
 print(trait_fit)
 
-# Plot with proper trait vectors (no arbitrary scaling)
-nmds_plot_with_proper_vectors <- nmds_plot_with_hulls +
-  geom_segment(data = trait_vectors, 
-               aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2),
-               arrow = arrow(length = unit(0.3, "cm")), 
-               color = "black", 
-               size = 1,
-               inherit.aes = FALSE) +
-  geom_text(data = trait_vectors,
-            aes(x = NMDS1 * 1.1, y = NMDS2 * 1.1, label = trait),
-            color = "black", 
-            size = 3, 
-            fontface = "bold",
-            inherit.aes = FALSE)
+# Plot NMDS with hull and vectors
+(nmds_plot_with_proper_vectors <- nmds_plot +
+    geom_segment(data = trait_vectors, 
+                 aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2),
+                 arrow = arrow(length = unit(0.3, "cm")), 
+                 color = "black", 
+                 size = 1,
+                 inherit.aes = FALSE) +
+    geom_text(data = trait_vectors,
+              aes(x = NMDS1 * 1.1, y = NMDS2 * 1.1, label = trait),
+              color = "black", 
+              size = 3, 
+              fontface = "bold",
+              inherit.aes = FALSE))
 
 ## 5.5. Statistical tests ------------------------------------------------------
 
