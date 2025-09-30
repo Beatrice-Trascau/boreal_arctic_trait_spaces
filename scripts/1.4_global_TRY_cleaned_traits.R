@@ -376,6 +376,24 @@ print(trait_fit)
             fontface = "bold",
             inherit.aes = FALSE))
 
+## 5.4. Statistical tests ------------------------------------------------------
+
+# Remove Silene acaulis
+new_trait_matrix <- complete_trait_matrix[!rownames(complete_trait_matrix) %in% c("Silene acaulis"),]
+  
+
+# Test for significant differences between groups using PERMANOVA
+permanova_result <- adonis2(new_trait_matrix ~ caff_biome_category, 
+                            data = nmds_plot_data[nmds_plot_data$StandardSpeciesName %in% rownames(new_trait_matrix), ],
+                            na.rm = TRUE, method = "euclidean")
+
+print(permanova_result)
+
+# Test for homogeneity of dispersions
+dispersion_test <- betadisper(vegdist(trait_matrix), 
+                              species_biome_classification$biome_category[species_biome_classification$StandardSpeciesName %in% rownames(trait_matrix)])
+permutest(dispersion_test)
+
 # 5. NMDS WITHOUT SEED MASS ----------------------------------------------------
 
 # Remove seed mass from list of traits
@@ -460,7 +478,3 @@ p1<- ggplot(sla_height_wide, aes(x=sqrt_plant_height, y=sqrt_sla,
   theme(legend.position="right")
 
 ggMarginal(p1, groupColour = TRUE, groupFill = TRUE)
-
-
-
-
