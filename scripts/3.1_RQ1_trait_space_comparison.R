@@ -109,8 +109,8 @@ species_complete_data_threshold4 <- species_trait_counts |>
   summarise(n_traits_with_data = n(), .groups = "drop") |>
   filter(n_traits_with_data == 4)
 
-cat("\nSpecies with >=3 records for ALL 4 key traits:", 
-    nrow(species_complete_data_threshold4), "species\n")
+# Check how many species have complete data
+nrow(species_complete_data_threshold4)
 
 # Also check breakdown by trait
 trait_availability <- species_trait_counts |>
@@ -120,7 +120,7 @@ trait_availability <- species_trait_counts |>
   summarise(n_species_available = n(), .groups = "drop") |>
   arrange(desc(n_species_available))
 
-cat("\nSpecies per trait (>=4 records):\n")
+# Check availability broken down by trait
 print(trait_availability)
 
 
@@ -137,9 +137,9 @@ global_traits1 <- try_raw |>
                                   "Eriophorum scheuchzeri", 
                                   AccSpeciesName))
 
-cat("Species before cleaning:", length(unique(try_raw$AccSpeciesName)), "\n")
-cat("Species after removing morphospecies:", 
-    length(unique(global_traits1$AccSpeciesName)), "\n")
+# Compare number of species brfore and after removing the morphospecies
+length(unique(try_raw$AccSpeciesName))
+length(unique(global_traits1$AccSpeciesName))
 
 ## 3.2. Standardise subspecies/varieties to species level ----------------------
 
@@ -182,5 +182,107 @@ global_traits5 <- global_traits4 |>
     StandardSpeciesName == "Salix herbaceae-polaris" ~ "Salix herbacea",
     .default = StandardSpeciesName))
 
-cat("Final cleaned species count:", 
-    length(unique(global_traits5$StandardSpeciesName)), "\n")
+# Check how many species are left
+length(unique(global_traits5$StandardSpeciesName))
+
+# 4. ADD DISTANCE TO BIOME BOUNDARY --------------------------------------------
+
+# Remove Elodea canadensis & hybrids from biome boundaries
+biome_boundaries <- detailed_results |>
+  filter(!species == "Elodea canadensis") |>
+  filter(!str_detect(species, " × "))
+
+# Combine with trait data
+global_cleaned_traits1 <- global_traits5 |>
+  left_join(biome_boundaries, by = c("StandardSpeciesName" = "species"))
+
+# Rename distance column
+global_cleaned_traits2 <- global_cleaned_traits1 |>
+  rename(species_level_mean_distance_km = mean_distance_km)
+
+# Remove species without distance data
+global_cleaned_traits3 <- global_cleaned_traits2 |>
+  filter(!is.na(species_level_mean_distance_km))
+
+# Check the number of unique species left after cleaning
+length(unique(global_cleaned_traits3$StandardSpeciesName))
+
+# 5. CLASSIFICATION QUALITY CONTROL --------------------------------------------
+
+# Prepare CAFF classification
+caff_check <- caff_check |>
+  rename(StandardSpeciesName = SPECIES_CLEAN)
+
+# Add CAFF classification
+caff_global_cleaned_traits <- global_cleaned_traits3 |>
+  left_join(caff_check |> select(StandardSpeciesName, final.category), 
+            by = "StandardSpeciesName")
+
+# Filter out species marked for removal
+caff_global_cleaned_traits2 <- caff_global_cleaned_traits |>
+  mutate(caff_biome_category = final.category) |>
+  filter(!caff_biome_category == "remove")
+
+# Check how many unique species there are in the newly cleaned df
+length(unique(caff_global_cleaned_traits2$StandardSpeciesName))
+
+# Check classification breakdown
+classification_summary <- caff_global_cleaned_traits2 |>
+  distinct(StandardSpeciesName, caff_biome_category) |>
+  count(caff_biome_category)
+
+# Look at the classification summary
+print(classification_summary)
+
+# 6. CALCULATE SPECIES-LEVEL TRAIT MEDIANS ------------------------------------
+
+# Calculate medians for species with >=3 records per trait
+traits_median <- caff_global_cleaned_traits2 |>
+  group_by(StandardSpeciesName, TraitNameNew) |>
+  mutate(number_of_records = length(StdValue)) |>
+  filter(number_of_records > 2) |>  # >=3 records threshold
+  summarise(max_trait_value = max(StdValue, na.rm = TRUE),
+            MedianTraitValue = median(StdValue, na.rm = TRUE),
+            n_records = n(),
+            .groups = "drop")
+
+# Check how many species-trait combinations there are left after filtering
+nrow(traits_median)
+
+# Add distance to biome boundaries
+traits_median_df <- traits_median |>
+  left_join(biome_boundaries, by = c("StandardSpeciesName" = "species")) |>
+  rename(species_level_mean_distance_km = mean_distance_km) |>
+  filter(!is.na(species_level_mean_distance_km), !is.na(MedianTraitValue)) |>
+  mutate(log_median_trait_value = log(MedianTraitValue))
+
+# Check how many species-trait combinations with complete data there are
+nrow(traits_median_df)
+
+# Categorise species by biome (based on distance)
+species_biome_classification <- traits_median_df |>
+  distinct(StandardSpeciesName, species_level_mean_distance_km) |>
+  mutate(pipeline_biome_category = case_when(species_level_mean_distance_km > 0 ~ "boreal",
+                                             species_level_mean_distance_km < 0 ~ "tundra",
+                                             TRUE ~ "boundary"))
+
+# 7. CREATE TRAIT MATRIX FOR NMDS ----------------------------------------------
+
+## 7.1. Four-trait NMDS (PlantHeight, SLA, LeafN, SeedMass) -------------------
+
+# Create wide format trait matrix
+trait_matrix_4trait <- traits_median_df |>
+  filter(TraitNameNew %in% key_traits) |>
+  select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
+  pivot_wider(names_from = TraitNameNew, 
+              values_from = log_median_trait_value) |>
+  column_to_rownames("StandardSpeciesName")
+
+# Remove species with missing data for any trait
+complete_trait_matrix_4trait <- trait_matrix_4trait[complete.cases(trait_matrix_4trait), ]
+
+# Check how many species will be included in the NMDS
+nrow(complete_trait_matrix_4trait) #101
+
+# Double check the traits included
+paste(colnames(complete_trait_matrix_4trait), collapse = ", ")
