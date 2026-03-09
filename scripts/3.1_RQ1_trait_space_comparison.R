@@ -266,9 +266,9 @@ species_biome_classification <- traits_median_df |>
                                              species_level_mean_distance_km < 0 ~ "tundra",
                                              TRUE ~ "boundary"))
 
-# 7. CREATE TRAIT MATRIX FOR NMDS ----------------------------------------------
+# 7. NMDS WITH 4 TRAITS  -------------------------------------------------------
 
-## 7.1. Four-trait NMDS (PlantHeight, SLA, LeafN, SeedMass) -------------------
+## 7.1. Create trait matrix (PlantHeight, SLA, LeafN, SeedMass) ----------------
 
 # Create wide format trait matrix
 trait_matrix_4trait <- traits_median_df |>
@@ -286,3 +286,158 @@ nrow(complete_trait_matrix_4trait) #101
 
 # Double check the traits included
 paste(colnames(complete_trait_matrix_4trait), collapse = ", ")
+
+## 7.2. Run NMDS ---------------------------------------------------------------
+
+# Set seed
+set.seed(532826)
+
+# Run NMDS
+nmds_4trait <- metaMDS(complete_trait_matrix_4trait, 
+                       distance = "euclidean",
+                       k = 3,
+                       trymax = 100)
+
+# Get the stress value
+round(nmds_4trait$stress, 3) # 0.019
+
+# Check stress across dimensions
+dimcheck_4trait <- dimcheckMDS(complete_trait_matrix_4trait,
+                               distance = "euclidean",
+                               k = 4) # not the happiest
+
+## 7.3. Extract NMDS scores and add classification ----------------------------
+
+# Get NMDS scores
+nmds_scores_4trait <- as.data.frame(nmds_4trait$points)
+nmds_scores_4trait$StandardSpeciesName <- rownames(nmds_scores_4trait)
+
+# Get CAFF biome classification
+caff_biomes <- caff_global_cleaned_traits2 |>
+  select(StandardSpeciesName, caff_biome_category) |>
+  distinct(StandardSpeciesName, .keep_all = TRUE)
+
+# Add classification to NMDS scores
+nmds_plot_data_4trait <- nmds_scores_4trait |>
+  left_join(caff_biomes, by = "StandardSpeciesName") |>
+  filter(!is.na(caff_biome_category))
+
+# Check how many species are in the final NMDS plot
+nrow(nmds_plot_data_4trait) #101 (correct)
+
+
+## 8.3. Fit trait vectors ------------------------------------------------------
+
+# Fit trait vectors to ordination
+trait_fit_4trait <- envfit(nmds_4trait, complete_trait_matrix_4trait, 
+                           permutations = 999, na.rm = TRUE)
+
+# Check values
+print(trait_fit_4trait)
+
+# Extract vectors
+trait_vectors_4trait <- as.data.frame(scores(trait_fit_4trait, "vectors"))
+trait_vectors_4trait$trait <- rownames(trait_vectors_4trait)
+
+## 8.4. Statistical tests ------------------------------------------------------
+
+# PERMANOVA with all species
+permanova_4trait_full <- adonis2(complete_trait_matrix_4trait ~ caff_biome_category, 
+                                 data = nmds_plot_data_4trait,
+                                 method = "euclidean")
+
+# Check PERMANOVA results
+print(permanova_4trait_full)
+
+# PERMANOVA without Silene acaulis (sensitivity check)
+if("Silene acaulis" %in% rownames(complete_trait_matrix_4trait)) {
+  cat("\nSensitivity analysis: Removing Silene acaulis...\n")
+  
+  trait_matrix_no_silene <- complete_trait_matrix_4trait[
+    !rownames(complete_trait_matrix_4trait) %in% c("Silene acaulis"), ]
+  
+  permanova_4trait_no_silene <- adonis2(trait_matrix_no_silene ~ caff_biome_category, 
+                                        data = nmds_plot_data_4trait[
+                                          nmds_plot_data_4trait$StandardSpeciesName != "Silene acaulis", ],
+                                        method = "euclidean")
+  
+  cat("\nPERMANOVA results (without Silene acaulis):\n")
+  print(permanova_4trait_no_silene)
+} else {
+  cat("\nNote: Silene acaulis not in dataset\n")
+}
+
+# Test for homogeneity of dispersions
+dispersion_4trait <- betadisper(vegdist(complete_trait_matrix_4trait, method = "euclidean"), 
+                                nmds_plot_data_4trait$caff_biome_category)
+dispersion_test_4trait <- permutest(dispersion_4trait)
+
+print(dispersion_test_4trait)
+
+## 8.5. Create NMDS plot -------------------------------------------------------
+
+# Get convex hulls
+boreal_scores_4trait <- nmds_plot_data_4trait[nmds_plot_data_4trait$caff_biome_category == "boreal", ][
+  chull(nmds_plot_data_4trait[nmds_plot_data_4trait$caff_biome_category == "boreal", c("MDS1", "MDS2")]), ]
+
+tundra_scores_4trait <- nmds_plot_data_4trait[nmds_plot_data_4trait$caff_biome_category == "tundra", ][
+  chull(nmds_plot_data_4trait[nmds_plot_data_4trait$caff_biome_category == "tundra", c("MDS1", "MDS2")]), ]
+
+hull_data_4trait <- rbind(boreal_scores_4trait, tundra_scores_4trait)
+
+# Create base plot
+nmds_plot_4trait <- ggplot(nmds_plot_data_4trait, 
+                           aes(x = MDS1, y = MDS2, color = caff_biome_category)) +
+  geom_polygon(data = hull_data_4trait,
+               aes(x = MDS1, y = MDS2, fill = caff_biome_category, group = caff_biome_category),
+               alpha = 0.30) +
+  geom_point(size = 2, alpha = 0.7) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                     name = "Biome") +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                    name = "Biome") +
+  labs(x = "NMDS1", 
+       y = "NMDS2",
+       subtitle = paste0("Based on ", ncol(complete_trait_matrix_4trait), " traits, ", 
+                         nrow(nmds_plot_data_4trait), " species | Stress = ", 
+                         round(nmds_4trait$stress, 3))) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+# Add trait vectors
+nmds_plot_4trait_vectors <- nmds_plot_4trait +
+  geom_segment(data = trait_vectors_4trait, 
+               aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2),
+               arrow = arrow(length = unit(0.3, "cm")), 
+               color = "black", 
+               size = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = trait_vectors_4trait,
+            aes(x = NMDS1 * 1.1, y = NMDS2 * 1.1, label = trait),
+            color = "black", 
+            size = 3, 
+            fontface = "bold",
+            inherit.aes = FALSE)
+
+# Check the plot
+print(nmds_plot_4trait_vectors)
+
+# Save plot
+ggsave(here("figures", "Figure2_RQ1_NMDS_4traits.png"), 
+       plot = nmds_plot_4trait_vectors, width = 10, height = 8, dpi = 300)
+
+# 10. SAVE RESULTS -------------------------------------------------------------
+
+# Save NMDS objects
+save(nmds_4trait, nmds_plot_data_4trait,
+     trait_vectors_4trait,
+     permanova_4trait_full,
+     file = here("data", "derived_data", "RQ1_NMDS_results.RData"))
+
+# Save species lists
+species_4trait <- data.frame(StandardSpeciesName = rownames(complete_trait_matrix_4trait))
+write.csv(species_4trait, 
+          here("data", "derived_data", "RQ1_species_4trait_NMDS.csv"),
+          row.names = FALSE)
+
+# END OF SCRIPT ----------------------------------------------------------------
