@@ -326,7 +326,7 @@ nmds_plot_data_4trait <- nmds_scores_4trait |>
 nrow(nmds_plot_data_4trait) #101 (correct)
 
 
-## 8.3. Fit trait vectors ------------------------------------------------------
+## 7.4. Fit trait vectors ------------------------------------------------------
 
 # Fit trait vectors to ordination
 trait_fit_4trait <- envfit(nmds_4trait, complete_trait_matrix_4trait, 
@@ -339,7 +339,7 @@ print(trait_fit_4trait)
 trait_vectors_4trait <- as.data.frame(scores(trait_fit_4trait, "vectors"))
 trait_vectors_4trait$trait <- rownames(trait_vectors_4trait)
 
-## 8.4. Statistical tests ------------------------------------------------------
+## 7.5. Statistical tests ------------------------------------------------------
 
 # PERMANOVA with all species
 permanova_4trait_full <- adonis2(complete_trait_matrix_4trait ~ caff_biome_category, 
@@ -374,7 +374,7 @@ dispersion_test_4trait <- permutest(dispersion_4trait)
 
 print(dispersion_test_4trait)
 
-## 8.5. Create NMDS plot -------------------------------------------------------
+## 7.6. Create NMDS plot -------------------------------------------------------
 
 # Get convex hulls
 boreal_scores_4trait <- nmds_plot_data_4trait[nmds_plot_data_4trait$caff_biome_category == "boreal", ][
@@ -426,7 +426,7 @@ print(nmds_plot_4trait_vectors)
 ggsave(here("figures", "Figure2_RQ1_NMDS_4traits.png"), 
        plot = nmds_plot_4trait_vectors, width = 10, height = 8, dpi = 300)
 
-# 10. SAVE RESULTS -------------------------------------------------------------
+# 8. SAVE RESULTS --------------------------------------------------------------
 
 # Save NMDS objects
 save(nmds_4trait, nmds_plot_data_4trait,
@@ -439,5 +439,175 @@ species_4trait <- data.frame(StandardSpeciesName = rownames(complete_trait_matri
 write.csv(species_4trait, 
           here("data", "derived_data", "RQ1_species_4trait_NMDS.csv"),
           row.names = FALSE)
+
+# 9. GLLVM --------------------------------------------------------------------
+
+## 9.1. Prepare data for GLLVM -------------------------------------------------
+
+# Use the same trait matrix as 4-trait NMDS
+gllvm_data <- complete_trait_matrix_4trait
+
+# Get biome classification for the SAME species that are in gllvm_data
+# Extract from the CAFF data, matching on species names
+gllvm_species_names <- rownames(gllvm_data)
+
+# Create biome data frame with exact species match
+gllvm_biome_full <- caff_biomes |>
+  filter(StandardSpeciesName %in% gllvm_species_names)
+
+# Reorder to match gllvm_data exactly
+gllvm_biome_full <- gllvm_biome_full[match(gllvm_species_names, gllvm_biome_full$StandardSpeciesName), ]
+
+# Extract just the biome column
+gllvm_biome <- data.frame(biome = gllvm_biome_full$caff_biome_category)
+
+# Check that the matching is correct
+if(!all(rownames(gllvm_data) == gllvm_biome_full$StandardSpeciesName)) {
+  stop("ERROR: Species order mismatch between trait data and biome classification!")
+}
+
+# Check how many species are in each biome
+print(table(gllvm_biome$biome))
+
+## 9.2. Fit GLLVM with biome predictor -----------------------------------------
+
+# Set seed (same one as for the NMDS)
+set.seed(532826)
+
+# Fit GLLVM with 1 latent variable (4 traits limits us to num.lv = 1)
+gllvm_model <- gllvm(y = gllvm_data,
+                     X = gllvm_biome,
+                     family = "gaussian",
+                     num.lv = 1,
+                     formula = ~ biome,
+                     seed = 532826)
+
+# Check model summary
+print(summary(gllvm_model))
+
+## 9.3. Fit null model and test biome effect -----------------------------------
+
+# Set the same seed
+set.seed(532826)
+
+# Fit null model (without biome predictor)
+gllvm_null <- gllvm(y = gllvm_data,
+                    family = "gaussian",
+                    num.lv = 1,
+                    seed = 532826)
+
+# Likelihood ratio test
+gllvm_anova <- anova(gllvm_null, gllvm_model)
+print(gllvm_anova)
+
+# Extract p-value
+biome_p_value <- gllvm_anova$`Pr(>Chi)`[2]
+
+# Manual LRT calculation (in case anova() gives wrong p-value)
+ll_null <- as.numeric(logLik(gllvm_null))
+ll_full <- as.numeric(logLik(gllvm_model))
+lr_stat <- -2 * (ll_null - ll_full)
+df_diff <- attr(logLik(gllvm_model), "df") - attr(logLik(gllvm_null), "df")
+p_value_manual <- pchisq(lr_stat, df = df_diff, lower.tail = FALSE)
+
+# Calculate pseudo R-squared
+pseudo_r2 <- 1 - (ll_full / ll_null) # -0.02436484
+
+## 9.4. Extract trait-specific biome effects -----------------------------------
+
+# Get coefficients with standard errors from summary
+trait_effects <- as.data.frame(gllvm_summary$Coef.tableX)
+
+# Clean up row names to get trait names
+trait_effects$Trait <- gsub("biometundra:", "", rownames(trait_effects))
+
+# Reorder columns and rename for clarity
+trait_effects <- trait_effects |>
+  select(Trait, Coefficient = Estimate, SE = `Std. Error`,
+         Z_value = `z value`, P_value = `Pr(>|z|)`) |>
+  mutate(Lower95 = Coefficient - 1.96 * SE,
+         Upper95 = Coefficient + 1.96 * SE,
+         Significance = case_when(P_value < 0.001 ~ "***",
+                                  P_value < 0.01 ~ "**",
+                                  P_value < 0.05 ~ "*",
+                                  P_value < 0.1 ~ ".",
+                                  TRUE ~ "ns"),
+         Sig_binary = ifelse(P_value < 0.05, "Significant (p<0.05)", "Not significant"))
+
+# Display
+print(trait_effects, row.names = FALSE)
+
+# Pretty print each trait
+for(i in 1:nrow(trait_effects)) {
+  cat("  ", trait_effects$Trait[i], ":\n")
+  cat("      β =", sprintf("%.3f", trait_effects$Coefficient[i]), 
+      "±", sprintf("%.3f", trait_effects$SE[i]), 
+      trait_effects$Significance[i], "\n")
+  cat("      Z =", sprintf("%.2f", trait_effects$Z_value[i]), 
+      ", p =", format.pval(trait_effects$P_value[i], digits = 4), "\n\n")
+}
+
+# Save model output
+write.csv(trait_effects,
+          here("data", "derived_data", "RQ1_GLLVM_trait_effects.csv"),
+          row.names = FALSE)
+
+## 9.5. Extract latent variable loadings ---------------------------------------
+
+# Get loadings from model parameters
+lv_loadings <- gllvm_model$params$theta
+
+# Create loadings data frame
+loadings_df <- data.frame(Trait = rownames(lv_loadings),
+                          Loading_LV1 = lv_loadings[, 1]) |>
+  arrange(desc(abs(Loading_LV1)))
+
+# Get loadings
+print(loadings_df) # latent variable captures the variation not explained by biome
+# higher absolute loading value = trait contributes more to the latent variable
+
+## 9.6. Visualize trait-specific effects --------------------------------------
+
+# Create forest plot
+gllvm_forest_plot <- ggplot(trait_effects, 
+                            aes(x = reorder(Trait, Coefficient), 
+                                y = Coefficient,
+                                color = Sig_binary)) +
+  geom_hline(yintercept = 0, linetype = "dashed", color = "gray50", size = 0.8) +
+  geom_errorbar(aes(ymin = Lower95, ymax = Upper95), 
+                width = 0.2, size = 1) +
+  geom_point(size = 4) +
+  scale_color_manual(values = c("Significant (p<0.05)" = "steelblue", 
+                                "Not significant" = "gray60"),
+                     name = "") +
+  coord_flip() +
+  labs(x = "",
+       y = "Coefficient (Tundra relative to Boreal)") +
+  theme_classic() +
+  theme(axis.text.y = element_text(size = 16, face = "bold"),
+        axis.text.x = element_text(size = 14),
+        axis.title.x = element_text(size = 14),
+        legend.position = "bottom",
+        legend.text = element_text(size = 14))
+
+# Check the plots
+print(gllvm_forest_plot)
+
+# Save plot
+ggsave(here("figures", "RQ1_GLLVM_trait_effects.png"),
+       plot = gllvm_forest_plot, width = 8, height = 6, dpi = 300)
+
+## 9.7. Model diagnostics ------------------------------------------------------
+
+# Check convergence
+gllvm_model$convergence
+
+# Create diagnostic plots
+png(here("figures", "RQ1_GLLVM_diagnostics.png"), 
+    width = 10, height = 10, units = "in", res = 300)
+par(mfrow = c(2, 2))
+plot(gllvm_model, which = 1:4)
+par(mfrow = c(1, 1))
+dev.off()
 
 # END OF SCRIPT ----------------------------------------------------------------
