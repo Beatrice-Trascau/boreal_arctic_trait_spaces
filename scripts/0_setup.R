@@ -25,7 +25,7 @@ package_vec <- c("here", "terra", "sf", "geodata", "mapview",
                  "htmltools", "patchwork", "webshot2", "CoordinateCleaner",
                  "car", "kableExtra", "readr", "rnaturalearth", "rnaturalearthdata",
                  "rgbif", "purr", "DT", "MultiTraits", "BIEN", "vegan",
-                 "openxlsx", "goeveg", "moments")
+                 "openxlsx", "goeveg", "moments", "gllvm")
 
 # Execute the function
 sapply(package_vec, install_load_package)
