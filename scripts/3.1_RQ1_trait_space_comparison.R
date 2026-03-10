@@ -610,4 +610,293 @@ plot(gllvm_model, which = 1:4)
 par(mfrow = c(1, 1))
 dev.off()
 
+# 10. PAIRWISE TRAIT COMPARISON ------------------------------------------------
+
+## 10.1. Prepare data for pairwise plots ---------------------------------------
+
+# Use the trait matrix BEFORE removing incomplete cases
+pairwise_df_all <- as.data.frame(trait_matrix_4trait) |>
+  mutate(Species = rownames(trait_matrix_4trait)) |>
+  left_join(caff_biomes %>% select(StandardSpeciesName, caff_biome_category),
+            by = c("Species" = "StandardSpeciesName")) |>
+  rename(Biome = caff_biome_category) |>
+  filter(!is.na(Biome))
+
+# Check how many species there are in total
+nrow(pairwise_df_all)
+
+# Check how they break down by biome
+print(table(pairwise_df_all$Biome))
+
+# Define list of trait pair
+trait_pairs_list <- list(c("PlantHeight", "SLA"),
+                         c("PlantHeight", "LeafN"),
+                         c("PlantHeight", "SeedMass"),
+                         c("SLA", "LeafN"),
+                         c("SLA", "SeedMass"),
+                         c("LeafN", "SeedMass"))
+
+# Count the number of species available for each trait pair
+for(pair in trait_pairs_list) {
+  trait1 <- pair[1]
+  trait2 <- pair[2]
+  
+  # get total number of species
+  n_species <- sum(!is.na(pairwise_df_all[[trait1]]) & !is.na(pairwise_df_all[[trait2]]))
+  
+  # get number of boreal species
+  n_boreal <- sum(!is.na(pairwise_df_all[[trait1]]) & 
+                    !is.na(pairwise_df_all[[trait2]]) & 
+                    pairwise_df_all$Biome == "boreal")
+  
+  # get number of tundra species
+  n_tundra <- sum(!is.na(pairwise_df_all[[trait1]]) & 
+                    !is.na(pairwise_df_all[[trait2]]) & 
+                    pairwise_df_all$Biome == "tundra")
+  
+  # display number of species per each trait pair broken down by biome
+  cat("  ", trait1, "×", trait2, ": n =", n_species, 
+      "(", n_boreal, "boreal,", n_tundra, "tundra )\n")
+}
+
+## 10.2. Plant Height vs SLA ---------------------------------------------------
+
+# Filter to species with both traits
+plot1_data <- pairwise_df_all |>
+  filter(!is.na(PlantHeight) & !is.na(SLA))
+
+# Calculate sample sizes
+n_total_1 <- nrow(plot1_data)
+n_boreal_1 <- sum(plot1_data$Biome == "boreal")
+n_tundra_1 <- sum(plot1_data$Biome == "tundra")
+
+# Plot Plant Height vs SLA
+plot1_base <- ggplot(plot1_data, aes(x = PlantHeight, y = SLA, color = Biome, fill = Biome)) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
+  geom_point(alpha = 0.6, size = 2.5) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
+  # Add detailed sample size annotation
+  annotate("text", x = -Inf, y = Inf, 
+           label = paste0("n = ", n_total_1, " (", n_boreal_1, " boreal, ", n_tundra_1, " tundra)"), 
+           hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  labs(x = "Plant Height (log)", 
+       y = "SLA (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Add marginal boxplots
+plot1 <- ggMarginal(plot1_base, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+# Check that it looks ok
+print(plot1)
+
+## 10.3. Plant Height vs Leaf N ------------------------------------------------
+
+# Filter to species with both traits
+plot2_data <- pairwise_df_all |>
+  filter(!is.na(PlantHeight) & !is.na(LeafN))
+
+# Calculate sample sizes
+n_total_2 <- nrow(plot2_data)
+n_boreal_2 <- sum(plot2_data$Biome == "boreal")
+n_tundra_2 <- sum(plot2_data$Biome == "tundra")
+
+# Plot Plant Height vs Leaf N
+plot2_base <- ggplot(plot2_data, aes(x = PlantHeight, y = LeafN, color = Biome, fill = Biome)) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
+  geom_point(alpha = 0.6, size = 2.5) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
+  annotate("text", x = -Inf, y = Inf, 
+           label = paste0("n = ", n_total_2, " (", n_boreal_2, " boreal, ", n_tundra_2, " tundra)"), 
+           hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  labs(x = "Plant Height (log)", 
+       y = "Leaf N (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Add marginal boxplots
+plot2 <- ggMarginal(plot2_base, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+# Check that it looks ok
+print(plot2)
+
+## 10.4. Plant Height vs Seed Mass ---------------------------------------------
+
+# Filter to species with both traits
+plot3_data <- pairwise_df_all |>
+  filter(!is.na(PlantHeight) & !is.na(SeedMass))
+
+# Calculate sample sizes
+n_total_3 <- nrow(plot3_data)
+n_boreal_3 <- sum(plot3_data$Biome == "boreal")
+n_tundra_3 <- sum(plot3_data$Biome == "tundra")
+
+# Plot
+plot3_base <- ggplot(plot3_data, aes(x = PlantHeight, y = SeedMass, color = Biome, fill = Biome)) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
+  geom_point(alpha = 0.6, size = 2.5) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
+  annotate("text", x = -Inf, y = Inf, 
+           label = paste0("n = ", n_total_3, " (", n_boreal_3, " boreal, ", n_tundra_3, " tundra)"), 
+           hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  labs(x = "Plant Height (log)", 
+       y = "Seed Mass (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Add marginal boxplots
+plot3 <- ggMarginal(plot3_base, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+# Check that it looks ok
+print(plot3)
+
+## 10.5. SLA vs Leaf N ---------------------------------------------------------
+
+# Filter to species with both traits
+plot4_data <- pairwise_df_all |> 
+  filter(!is.na(SLA) & !is.na(LeafN))
+
+# Calculate sample sizes
+n_total_4 <- nrow(plot4_data)
+n_boreal_4 <- sum(plot4_data$Biome == "boreal")
+n_tundra_4 <- sum(plot4_data$Biome == "tundra")
+
+# Plot
+plot4_base <- ggplot(plot4_data, aes(x = SLA, y = LeafN, color = Biome, fill = Biome)) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
+  geom_point(alpha = 0.6, size = 2.5) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
+  annotate("text", x = -Inf, y = Inf, 
+           label = paste0("n = ", n_total_4, " (", n_boreal_4, " boreal, ", n_tundra_4, " tundra)"), 
+           hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  labs(x = "SLA (log)", 
+       y = "Leaf N (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Add marginal boxes
+plot4 <- ggMarginal(plot4_base, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+# Check that it looks ok
+print(plot4)
+
+## 10.6. SLA vs Seed Mass ------------------------------------------------------
+
+# Filter to species with both traits
+plot5_data <- pairwise_df_all |>
+  filter(!is.na(SLA) & !is.na(SeedMass))
+
+# Calculate sample sizes
+n_total_5 <- nrow(plot5_data)
+n_boreal_5 <- sum(plot5_data$Biome == "boreal")
+n_tundra_5 <- sum(plot5_data$Biome == "tundra")
+
+# Plot
+plot5_base <- ggplot(plot5_data, aes(x = SLA, y = SeedMass, color = Biome, fill = Biome)) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
+  geom_point(alpha = 0.6, size = 2.5) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
+  annotate("text", x = -Inf, y = Inf, 
+           label = paste0("n = ", n_total_5, " (", n_boreal_5, " boreal, ", n_tundra_5, " tundra)"), 
+           hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  labs(x = "SLA (log)", 
+       y = "Seed Mass (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Add marginal boxes
+plot5 <- ggMarginal(plot5_base, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+# Check that plot looks ok
+print(plot5)
+
+## 10.7. Leaf N vs Seed Mass (with legend) -------------------------------------
+
+# Filter to species with both traits
+plot6_data <- pairwise_df_all |> 
+  filter(!is.na(LeafN) & !is.na(SeedMass))
+
+# Calculate sample sizes
+n_total_6 <- nrow(plot6_data)
+n_boreal_6 <- sum(plot6_data$Biome == "boreal")
+n_tundra_6 <- sum(plot6_data$Biome == "tundra")
+
+# Plot
+plot6_base <- ggplot(plot6_data, aes(x = LeafN, y = SeedMass, color = Biome, fill = Biome)) +
+  stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
+  stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
+  geom_point(alpha = 0.6, size = 2.5) +
+  stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
+  annotate("text", x = -Inf, y = Inf, 
+           label = paste0("n = ", n_total_6, " (", n_boreal_6, " boreal, ", n_tundra_6, " tundra)"), 
+           hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                     name = "Biome") +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+                    name = "Biome") +
+  labs(x = "Leaf N (log)", 
+       y = "Seed Mass (log)") +
+  theme_classic() +
+  theme(legend.position = "right",
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 11),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Add marginal boxes
+plot6 <- ggMarginal(plot6_base, type = "boxplot", groupColour = TRUE, groupFill = TRUE)
+
+# Check that plot looks ok
+print(plot6)
+
+# Combine into single figure
+trait_bagplots <- plot_grid(plot1, plot2, plot3, plot4, plot5, plot6,
+                            labels = c('a)', 'b)', 'c)', 'd)', 'e)', 'f)'),
+                            nrow = 2)
+
+# Save combined figure (png & pdf)
+ggsave(here("figures", "Figure2_pairwise_trait_comparisons_all_data.png"),
+       plot = trait_bagplots, width = 20, height = 15, dpi = 600)
+ggsave(here("figures", "Figure2_pairwise_trait_comparisons_all_data.pdf"),
+       plot = trait_bagplots, width = 20, height = 15, dpi = 600)
+
+# Save individual plots too
+ggsave(here("figures", "Figure21_pairwise_PlantHeight_SLA.png"), plot = plot1, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "Figure2b_pairwise_PlantHeight_LeafN.png"), plot = plot2, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "Figure2c_pairwise_PlantHeight_SeedMass.png"), plot = plot3, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "Figure2d_pairwise_SLA_LeafN.png"), plot = plot4, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "Figure2e_pairwise_SLA_SeedMass.png"), plot = plot5, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "figure2f_pairwise_LeafN_SeedMass.png"), plot = plot6, 
+       width = 6, height = 5, dpi = 600)
+
 # END OF SCRIPT ----------------------------------------------------------------
