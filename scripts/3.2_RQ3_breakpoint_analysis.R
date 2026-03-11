@@ -9,6 +9,10 @@
 
 ## 1.1. Load data --------------------------------------------------------------
 
+# Load packages and functions
+library(here)
+source(here("scripts", "0_setup.R"))
+
 # Load cleaned traits
 load(here("data", "derived_data", "TRY_traits_cleaned_July2025.RData"))
 cleaned_traits <- cleaned_traits_July2025
@@ -258,6 +262,57 @@ print(plot_ph)
 ggsave(here("figures", "Figure3a_PlantHeight_breakpoint_fitted.png"),
        plot = plot_ph, width = 10, height = 6, dpi = 600)
 
+## 3.5. Run breakpoint model with estimated breakpoint -------------------------
+
+# Fit simple lm to find breakpoint
+simple_lm_ph <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
+                   data = plant_height_final)
+
+# Fit segmented model
+tryCatch({
+  seg_model_ph <- segmented(simple_lm_ph, 
+                            seg.Z = ~ distance_to_boundary_km,
+                            psi = 0)
+  
+  breakpoint_estimate_ph <- seg_model_ph$psi[, "Est."]
+  breakpoint_se_ph <- seg_model_ph$psi[, "St.Err"]
+  
+  cat("  Estimated breakpoint:", round(breakpoint_estimate_ph, 2), "km\n")
+  cat("  Standard error:", round(breakpoint_se_ph, 2), "km\n")
+  cat("  95% CI: [", round(breakpoint_estimate_ph - 1.96*breakpoint_se_ph, 2), ",",
+      round(breakpoint_estimate_ph + 1.96*breakpoint_se_ph, 2), "]\n\n")
+  
+  # Fit lme with estimated breakpoint
+  plant_height_final <- plant_height_final |>
+    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_ph, 0),
+           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_ph, 0))
+  
+  model_ph_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                            random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                            data = plant_height_final,
+                            method = "REML")
+  
+  cat("  Model with estimated breakpoint:\n")
+  cat("    AIC:", round(AIC(model_ph_estimated), 2), "\n")
+  coefs_estimated_ph <- fixef(model_ph_estimated)
+  cat("    Tundra slope:", round(coefs_estimated_ph["distance_tundra_estimated"], 5), "\n")
+  cat("    Boreal slope:", round(coefs_estimated_ph["distance_boreal_estimated"], 5), "\n\n")
+  
+  estimated_converged_ph <- TRUE
+  
+}, error = function(e) {
+  cat("  ✗ Segmented model failed to converge\n")
+  cat("  Error:", e$message, "\n\n")
+  estimated_converged_ph <<- FALSE
+  breakpoint_estimate_ph <<- NA
+}) #breakpoint estimated at 6.6km
+
+# Compare models
+AICtab(model_plant_height, model_ph_estimated)
+# dAIC df
+# model_plant_height  0.0 6 
+# model_ph_estimated 12.1 6 
+
 # 4. SLA -----------------------------------------------------------------------
 
 ## 4.1. Prepare SLA data -------------------------------------------------------
@@ -366,6 +421,55 @@ print(plot_sla)
 ggsave(here("figures", "Figure3b_SLA_breakpoint_fitted.png"),
        plot = plot_sla, width = 10, height = 6, dpi = 600)
 
+## 4.5. Alternative model with estimated breakpoint ----------------------------
+
+# Fit simple lm to find breakpoint
+simple_lm_sla <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
+                    data = sla_final)
+
+# Fit segmented model
+tryCatch({
+  seg_model_sla <- segmented(simple_lm_sla, 
+                             seg.Z = ~ distance_to_boundary_km,
+                             psi = 0)
+  
+  breakpoint_estimate_sla <- seg_model_sla$psi[, "Est."]
+  breakpoint_se_sla <- seg_model_sla$psi[, "St.Err"]
+  
+  cat("  Estimated breakpoint:", round(breakpoint_estimate_sla, 2), "km\n")
+  cat("  Standard error:", round(breakpoint_se_sla, 2), "km\n")
+  cat("  95% CI: [", round(breakpoint_estimate_sla - 1.96*breakpoint_se_sla, 2), ",",
+      round(breakpoint_estimate_sla + 1.96*breakpoint_se_sla, 2), "]\n\n")
+  
+  sla_final <- sla_final %>%
+    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_sla, 0),
+           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_sla, 0))
+  
+  model_sla_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                             random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                             data = sla_final,
+                             method = "REML")
+  
+  cat("  Model with estimated breakpoint:\n")
+  cat("    AIC:", round(AIC(model_sla_estimated), 2), "\n")
+  coefs_estimated_sla <- fixef(model_sla_estimated)
+  cat("    Tundra slope:", round(coefs_estimated_sla["distance_tundra_estimated"], 5), "\n")
+  cat("    Boreal slope:", round(coefs_estimated_sla["distance_boreal_estimated"], 5), "\n\n")
+  
+  estimated_converged_sla <- TRUE
+  
+}, error = function(e) {
+  cat("  ✗ Segmented model failed to converge\n\n")
+  estimated_converged_sla <<- FALSE
+  breakpoint_estimate_sla <<- NA
+}) # breakpoint estimated at 184.11km
+
+# Compare models
+AICtab(model_sla, model_sla_estimated)
+# dAIC df
+# model_sla            0.0 6 
+# model_sla_estimated 35.9 6 
+
 # 5. LEAF N --------------------------------------------------------------------
 
 ## 5.1. Prepare Leaf N data ----------------------------------------------------
@@ -434,7 +538,7 @@ abline(v = 0, col = "blue", lty = 2)
 par(mfrow = c(1, 1))
 dev.off()
 
-## 5.4. Lraf N visualisation ---------------------------------------------------
+## 5.4. Leaf N visualisation ---------------------------------------------------
 
 # Create prediction data
 pred_data_leafn <- data.frame(distance_to_boundary_km = seq(min(leafn_final$distance_to_boundary_km),
@@ -473,6 +577,55 @@ print(plot_leafn)
 # Save figure
 ggsave(here("figures", "Figure3c_LeafN_breakpoint_fitted.png"),
        plot = plot_leafn, width = 10, height = 6, dpi = 600)
+
+## 5.5. Alternative model with estimated breakpoint ----------------------------
+
+# Run simple lm to find breakpoint
+simple_lm_leafn <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
+                      data = leafn_final)
+
+# Fit segmented model
+tryCatch({
+  seg_model_leafn <- segmented(simple_lm_leafn, 
+                               seg.Z = ~ distance_to_boundary_km,
+                               psi = 0)
+  
+  breakpoint_estimate_leafn <- seg_model_leafn$psi[, "Est."]
+  breakpoint_se_leafn <- seg_model_leafn$psi[, "St.Err"]
+  
+  cat("  Estimated breakpoint:", round(breakpoint_estimate_leafn, 2), "km\n")
+  cat("  Standard error:", round(breakpoint_se_leafn, 2), "km\n")
+  cat("  95% CI: [", round(breakpoint_estimate_leafn - 1.96*breakpoint_se_leafn, 2), ",",
+      round(breakpoint_estimate_leafn + 1.96*breakpoint_se_leafn, 2), "]\n\n")
+  
+  leafn_final <- leafn_final %>%
+    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_leafn, 0),
+           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_leafn, 0))
+  
+  model_leafn_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                               random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                               data = leafn_final,
+                               method = "REML")
+  
+  cat("  Model with estimated breakpoint:\n")
+  cat("    AIC:", round(AIC(model_leafn_estimated), 2), "\n")
+  coefs_estimated_leafn <- fixef(model_leafn_estimated)
+  cat("    Tundra slope:", round(coefs_estimated_leafn["distance_tundra_estimated"], 5), "\n")
+  cat("    Boreal slope:", round(coefs_estimated_leafn["distance_boreal_estimated"], 5), "\n\n")
+  
+  estimated_converged_leafn <- TRUE
+  
+}, error = function(e) {
+  cat("  ✗ Segmented model failed to converge\n\n")
+  estimated_converged_leafn <<- FALSE
+  breakpoint_estimate_leafn <<- NA
+}) # breakpoint estimated at -107.11km
+
+# Compare models
+AICtab(model_leafn, model_leafn_estimated)
+# dAIC df
+# model_leafn_estimated  0.0 6 
+# model_leafn           12.6 6
 
 # 6. SEED MASS -----------------------------------------------------------------
 
@@ -593,5 +746,56 @@ ggsave(here("figures", "Figure3_traits_breakpoint_fitted.png"),
        plot = trait_breakpoints, width = 10, height = 6, dpi = 600)
 ggsave(here("figures", "Figure3_traits_breakpoint_fitted.pdf"),
        plot = trait_breakpoints, width = 10, height = 6, dpi = 600)
+
+## 6.5. Alternative model with estimated breakpoint ----------------------------
+
+# Fit simple lm to find breakpoint
+simple_lm_seedmass <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
+                         data = seedmass_final)
+
+# Fit segmented model
+tryCatch({
+  seg_model_seedmass <- segmented(simple_lm_seedmass, 
+                                  seg.Z = ~ distance_to_boundary_km,
+                                  psi = 0)
+  
+  breakpoint_estimate_seedmass <- seg_model_seedmass$psi[, "Est."]
+  breakpoint_se_seedmass <- seg_model_seedmass$psi[, "St.Err"]
+  
+  cat("  Estimated breakpoint:", round(breakpoint_estimate_seedmass, 2), "km\n")
+  cat("  Standard error:", round(breakpoint_se_seedmass, 2), "km\n")
+  cat("  95% CI: [", round(breakpoint_estimate_seedmass - 1.96*breakpoint_se_seedmass, 2), ",",
+      round(breakpoint_estimate_seedmass + 1.96*breakpoint_se_seedmass, 2), "]\n\n")
+  
+  seedmass_final <- seedmass_final %>%
+    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_seedmass, 0),
+           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_seedmass, 0))
+  
+  model_seedmass_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                                  random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                                  data = seedmass_final,
+                                  method = "REML")
+  
+  cat("  Model with estimated breakpoint:\n")
+  cat("    AIC:", round(AIC(model_seedmass_estimated), 2), "\n")
+  coefs_estimated_seedmass <- fixef(model_seedmass_estimated)
+  cat("    Tundra slope:", round(coefs_estimated_seedmass["distance_tundra_estimated"], 5), "\n")
+  cat("    Boreal slope:", round(coefs_estimated_seedmass["distance_boreal_estimated"], 5), "\n\n")
+  
+  estimated_converged_seedmass <- TRUE
+  
+}, error = function(e) {
+  cat("  ✗ Segmented model failed to converge\n\n")
+  estimated_converged_seedmass <<- FALSE
+  breakpoint_estimate_seedmass <<- NA
+}) #estimated breakpoint at -0.33
+
+# Compare models
+AICtab(model_seedmass, model_seedmass_estimated) # equally good?
+
+# 7. GAMs ----------------------------------------------------------------------
+
+## 7.1. Plant Height GAMs ------------------------------------------------------
+
 
 # END OF SCRIPT ----------------------------------------------------------------
