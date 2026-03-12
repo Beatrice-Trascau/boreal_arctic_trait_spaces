@@ -58,6 +58,20 @@ biome_boundaries <- detailed_results |>
   filter(!species == "Elodea canadensis") |>
   filter(!str_detect(species, " × "))
 
+# REVERSE THE SIGN: multiply by -1 to follow new convention
+# Original: positive = boreal, negative = tundra
+# New: negative = boreal, positive = tundra
+biome_boundaries <- biome_boundaries |>
+  mutate(mean_distance_km = -mean_distance_km,
+         median_distance_km = -median_distance_km,
+         min_distance_km = -min_distance_km,
+         max_distance_km = -max_distance_km,
+         mean_distance_boreal_km = -mean_distance_boreal_km,
+         median_distance_boreal_km = -median_distance_boreal_km,
+         mean_distance_tundra_km = -mean_distance_tundra_km,
+         median_distance_tundra_km = -median_distance_tundra_km,
+         weighted_mean_distance_km = -weighted_mean_distance_km)
+
 # Combine the dataframes
 traits_biome_boundaries <- cleaned_traits |>
   left_join(biome_boundaries, by = c("StandardSpeciesName" = "species"))
@@ -68,6 +82,7 @@ traits_biome_boundaries <- traits_biome_boundaries |>
   rename(species_level_mean_distance_km = mean_distance_km)
 
 ## 2.2. Calculate distance to biome boundary for each trait record -------------
+## WITH REVERSED SIGN CONVENTION
 
 # Filter to records with valid coordinates
 traits_with_coords <- traits_biome_boundaries |>
@@ -92,20 +107,21 @@ in_tundra <- st_intersects(traits_sf, tundra_sf, sparse = FALSE)[,1]
 # Initialize distance column
 traits_with_coords$distance_to_boundary_km <- NA
 
-# Calculate distances for boreal points (positive)
+# REVERSED CONVENTION:
+# Calculate distances for boreal points (NEGATIVE)
 if(sum(in_boreal) > 0) {
   boreal_points <- traits_sf[in_boreal, ]
   boreal_distances <- st_distance(boreal_points, boreal_boundary)
   traits_with_coords$distance_to_boundary_km[in_boreal] <- 
-    apply(boreal_distances, 1, min) / 1000
+    -apply(boreal_distances, 1, min) / 1000  # NEGATIVE for boreal
 }
 
-# Calculate distances for tundra points (negative)
+# Calculate distances for tundra points (POSITIVE)
 if(sum(in_tundra) > 0) {
   tundra_points <- traits_sf[in_tundra, ]
   tundra_distances <- st_distance(tundra_points, tundra_boundary)
   traits_with_coords$distance_to_boundary_km[in_tundra] <- 
-    -apply(tundra_distances, 1, min) / 1000
+    apply(tundra_distances, 1, min) / 1000  # POSITIVE for tundra
 }
 
 # Add biome classification
@@ -149,11 +165,11 @@ length(unique(cleaned_traits_final$StandardSpeciesName))
 # Check the total number of records after filtering
 nrow(cleaned_traits_final)
 
-# Create piecewise distance variables (same for all traits)
+# Create piecewise distance variables with REVERSED convention
+# Now: boreal_side uses negative distances, tundra_side uses positive distances
 cleaned_traits_final <- cleaned_traits_final |>
-  mutate(distance_tundra_side = pmin(distance_to_boundary_km, 0),
-         distance_boreal_side = pmax(distance_to_boundary_km, 0))
-
+  mutate(distance_boreal_side = pmin(distance_to_boundary_km, 0),  # negative values (boreal)
+         distance_tundra_side = pmax(distance_to_boundary_km, 0))  # positive values (tundra)
 # 3. PLANT HEIGHT --------------------------------------------------------------
 
 ## 3.1. Prepare Plant Height data ----------------------------------------------
@@ -243,8 +259,8 @@ plot_ph <- ggplot() +
   geom_line(data = pred_data_ph,
             aes(x = distance_to_boundary_km, y = predicted_original),
             color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "blue", linewidth = 1) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
@@ -259,7 +275,7 @@ plot_ph <- ggplot() +
 print(plot_ph)
 
 # Save output
-ggsave(here("figures", "Figure3a_PlantHeight_breakpoint_fitted.png"),
+ggsave(here("figures", "Figure4a_PlantHeight_breakpoint_fitted.png"),
        plot = plot_ph, width = 10, height = 6, dpi = 600)
 
 ## 3.5. Run breakpoint model with estimated breakpoint -------------------------
@@ -402,8 +418,8 @@ plot_sla <- ggplot() +
   geom_line(data = pred_data_sla,
             aes(x = distance_to_boundary_km, y = predicted_original),
             color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "blue", linewidth = 1) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
@@ -418,7 +434,7 @@ plot_sla <- ggplot() +
 print(plot_sla)
 
 # Save
-ggsave(here("figures", "Figure3b_SLA_breakpoint_fitted.png"),
+ggsave(here("figures", "Figure4b_SLA_breakpoint_fitted.png"),
        plot = plot_sla, width = 10, height = 6, dpi = 600)
 
 ## 4.5. Alternative model with estimated breakpoint ----------------------------
@@ -559,8 +575,8 @@ plot_leafn <- ggplot() +
   geom_line(data = pred_data_leafn,
             aes(x = distance_to_boundary_km, y = predicted_original),
             color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "blue", linewidth = 1) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
@@ -575,7 +591,7 @@ plot_leafn <- ggplot() +
 print(plot_leafn)
 
 # Save figure
-ggsave(here("figures", "Figure3c_LeafN_breakpoint_fitted.png"),
+ggsave(here("figures", "Figure4c_LeafN_breakpoint_fitted.png"),
        plot = plot_leafn, width = 10, height = 6, dpi = 600)
 
 ## 5.5. Alternative model with estimated breakpoint ----------------------------
@@ -716,8 +732,8 @@ plot_seedmass <- ggplot() +
   geom_line(data = pred_data_seedmass,
             aes(x = distance_to_boundary_km, y = predicted_original),
             color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "blue", linewidth = 1) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
@@ -742,10 +758,10 @@ trait_breakpoints <- plot_grid(plot_ph, plot_sla, plot_leafn, plot_seedmass,
                                nrow = 2)
 
 # Save combined plot
-ggsave(here("figures", "Figure3_traits_breakpoint_fitted.png"),
-       plot = trait_breakpoints, width = 10, height = 6, dpi = 600)
-ggsave(here("figures", "Figure3_traits_breakpoint_fitted.pdf"),
-       plot = trait_breakpoints, width = 10, height = 6, dpi = 600)
+ggsave(here("figures", "Figure4_traits_breakpoint_fitted.png"),
+       plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
+ggsave(here("figures", "Figure4_traits_breakpoint_fitted.pdf"),
+       plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
 
 ## 6.5. Alternative model with estimated breakpoint ----------------------------
 
@@ -797,5 +813,18 @@ AICtab(model_seedmass, model_seedmass_estimated) # equally good?
 
 ## 7.1. Plant Height GAMs ------------------------------------------------------
 
+# Fit GAM 
+gam_full <- mgcv::gamm(log(CleanedTraitValue) ~ 
+                         s(distance_to_boundary_km, k=200) +  
+                         s(LON_site, LAT_site, bs="tp", k=100),  
+                       random = list(StandardSpeciesName = ~1),
+                       data = plant_height_final,
+                       method = "REML")
+
+# Check the model
+mgcv::gam.check(gam_full$gam)
+
+# The edf for distance to biome boundary differs based on the value of k given to'
+# the smoother that deals with the latitude and longitude 
 
 # END OF SCRIPT ----------------------------------------------------------------
