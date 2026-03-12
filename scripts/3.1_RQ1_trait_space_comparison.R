@@ -215,7 +215,7 @@ caff_check <- caff_check |>
 
 # Add CAFF classification
 caff_global_cleaned_traits <- global_cleaned_traits3 |>
-  left_join(caff_check |> select(StandardSpeciesName, final.category), 
+  left_join(caff_check |> dplyr::select(StandardSpeciesName, final.category), 
             by = "StandardSpeciesName")
 
 # Filter out species marked for removal
@@ -273,7 +273,7 @@ species_biome_classification <- traits_median_df |>
 # Create wide format trait matrix
 trait_matrix_4trait <- traits_median_df |>
   filter(TraitNameNew %in% key_traits) |>
-  select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
+  dplyr::select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
   pivot_wider(names_from = TraitNameNew, 
               values_from = log_median_trait_value) |>
   column_to_rownames("StandardSpeciesName")
@@ -314,7 +314,7 @@ nmds_scores_4trait$StandardSpeciesName <- rownames(nmds_scores_4trait)
 
 # Get CAFF biome classification
 caff_biomes <- caff_global_cleaned_traits2 |>
-  select(StandardSpeciesName, caff_biome_category) |>
+  dplyr::select(StandardSpeciesName, caff_biome_category) |>
   distinct(StandardSpeciesName, .keep_all = TRUE)
 
 # Add classification to NMDS scores
@@ -349,24 +349,6 @@ permanova_4trait_full <- adonis2(complete_trait_matrix_4trait ~ caff_biome_categ
 # Check PERMANOVA results
 print(permanova_4trait_full)
 
-# PERMANOVA without Silene acaulis (sensitivity check)
-if("Silene acaulis" %in% rownames(complete_trait_matrix_4trait)) {
-  cat("\nSensitivity analysis: Removing Silene acaulis...\n")
-  
-  trait_matrix_no_silene <- complete_trait_matrix_4trait[
-    !rownames(complete_trait_matrix_4trait) %in% c("Silene acaulis"), ]
-  
-  permanova_4trait_no_silene <- adonis2(trait_matrix_no_silene ~ caff_biome_category, 
-                                        data = nmds_plot_data_4trait[
-                                          nmds_plot_data_4trait$StandardSpeciesName != "Silene acaulis", ],
-                                        method = "euclidean")
-  
-  cat("\nPERMANOVA results (without Silene acaulis):\n")
-  print(permanova_4trait_no_silene)
-} else {
-  cat("\nNote: Silene acaulis not in dataset\n")
-}
-
 # Test for homogeneity of dispersions
 dispersion_4trait <- betadisper(vegdist(complete_trait_matrix_4trait, method = "euclidean"), 
                                 nmds_plot_data_4trait$caff_biome_category)
@@ -392,9 +374,9 @@ nmds_plot_4trait <- ggplot(nmds_plot_data_4trait,
                aes(x = MDS1, y = MDS2, fill = caff_biome_category, group = caff_biome_category),
                alpha = 0.30) +
   geom_point(size = 2, alpha = 0.7) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                     name = "Biome") +
   labs(x = "NMDS1", 
        y = "NMDS2",
@@ -426,13 +408,164 @@ print(nmds_plot_4trait_vectors)
 ggsave(here("figures", "Figure2_RQ1_NMDS_4traits.png"), 
        plot = nmds_plot_4trait_vectors, width = 10, height = 8, dpi = 300)
 
-# 8. SAVE RESULTS --------------------------------------------------------------
+# 8. NMDS WITHOUT SILENE ACAULIS -----------------------------------------------
 
-# Save NMDS objects
+## 8.1. Run NMDS ---------------------------------------------------------------
+
+# NMDS plot shows that one tundra species had very low NMDS2 score
+# Check what the minimum NMDS2 values is
+min(nmds_scores_4trait$MDS2)
+
+# Get the species that has this very low score
+low_score_species <- nmds_scores_4trait |>
+  filter(MDS2 < -2) # Silene acaulis
+
+# Create wide format trait matrix without Silene acaulis
+trait_matrix_without_silene <- traits_median_df |>
+  filter(TraitNameNew %in% key_traits,
+         StandardSpeciesName != "Silene acaulis") |>
+  dplyr::select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
+  pivot_wider(names_from = TraitNameNew, 
+              values_from = log_median_trait_value) |>
+  column_to_rownames("StandardSpeciesName")
+
+# Remove species with missing data for any trait
+complete_trait_matrix_without_silene <- trait_matrix_without_silene[complete.cases(trait_matrix_without_silene), ]
+
+# Check how many species will be included in the NMDS
+nrow(complete_trait_matrix_without_silene) #100
+
+# Double check the traits included
+paste(colnames(complete_trait_matrix_without_silene), collapse = ", ")
+
+# Set seed
+set.seed(532826)
+
+# Run NMDS
+nmds_without_silene <- metaMDS(complete_trait_matrix_without_silene, 
+                               distance = "euclidean",
+                               k = 3,
+                               trymax = 100)
+
+# Get the stress value
+round(nmds_without_silene$stress, 3) # 0.019
+
+# Check stress across dimensions
+dimcheck_without_silene <- dimcheckMDS(complete_trait_matrix_without_silene,
+                                       distance = "euclidean",
+                                       k = 4) # not the happiest
+
+## 8.2. Extract NMDS scores and add classification ----------------------------
+
+# Get NMDS scores
+nmds_scores_without_silene <- as.data.frame(nmds_without_silene$points)
+nmds_scores_without_silene$StandardSpeciesName <- rownames(nmds_scores_without_silene)
+
+# Add classification to NMDS scores
+nmds_plot_data_without_silene <- nmds_scores_without_silene |>
+  left_join(caff_biomes, by = "StandardSpeciesName") |>
+  filter(!is.na(caff_biome_category))
+
+# Check how many species are in the final NMDS plot
+nrow(nmds_plot_data_without_silene) #100 (correct)
+
+## 8.3. Fit trait vectors ------------------------------------------------------
+
+# Fit trait vectors to ordination
+trait_fit_without_silene <- envfit(nmds_without_silene, complete_trait_matrix_without_silene, 
+                                   permutations = 999, na.rm = TRUE)
+
+# Check values
+print(trait_fit_without_silene)
+
+# Extract vectors
+trait_vectors_without_silene <- as.data.frame(scores(trait_fit_without_silene, "vectors"))
+trait_vectors_without_silene$trait <- rownames(trait_vectors_without_silene)
+
+## 8.4. Statistical tests ------------------------------------------------------
+
+# PERMANOVA with all species
+permanova_without_silene <- adonis2(complete_trait_matrix_without_silene ~ caff_biome_category, 
+                                    data = nmds_plot_data_without_silene,
+                                    method = "euclidean") # difference still significant
+
+# Check PERMANOVA results
+print(permanova_without_silene)
+
+# Test for homogeneity of dispersions
+dispersion_without_silene <- betadisper(vegdist(complete_trait_matrix_without_silene, method = "euclidean"), 
+                                        nmds_plot_data_without_silene$caff_biome_category)
+dispersion_test_without_silene<- permutest(dispersion_without_silene)
+
+print(dispersion_test_without_silene)
+
+## 8.5. Create NMDS plot -------------------------------------------------------
+
+# Get convex hulls
+boreal_scores_without_silene <- nmds_plot_data_without_silene[nmds_plot_data_without_silene$caff_biome_category == "boreal", ][
+  chull(nmds_plot_data_without_silene[nmds_plot_data_without_silene$caff_biome_category == "boreal", c("MDS1", "MDS2")]), ]
+
+tundra_scores_without_silene <- nmds_plot_data_without_silene[nmds_plot_data_without_silene$caff_biome_category == "tundra", ][
+  chull(nmds_plot_data_without_silene[nmds_plot_data_without_silene$caff_biome_category == "tundra", c("MDS1", "MDS2")]), ]
+
+hull_data_without_silene <- rbind(boreal_scores_without_silene, 
+                                  tundra_scores_without_silene)
+
+# Create base plot
+nmds_plot_without_silene <- ggplot(nmds_plot_data_without_silene, 
+                           aes(x = MDS1, y = MDS2, color = caff_biome_category)) +
+  geom_polygon(data = hull_data_without_silene,
+               aes(x = MDS1, y = MDS2, fill = caff_biome_category, group = caff_biome_category),
+               alpha = 0.30) +
+  geom_point(size = 2, alpha = 0.7) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                     name = "Biome") +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                    name = "Biome") +
+  labs(x = "NMDS1", 
+       y = "NMDS2",
+       subtitle = paste0("Based on ", ncol(complete_trait_matrix_without_silene), " traits, ", 
+                         nrow(nmds_plot_data_without_silene), " species | Stress = ", 
+                         round(nmds_without_silene$stress, 3))) +
+  theme_classic() +
+  theme(legend.position = "bottom")
+
+# Add trait vectors
+nmds_plot_without_silene_vectors <- nmds_plot_without_silene +
+  geom_segment(data = trait_vectors_without_silene, 
+               aes(x = 0, y = 0, xend = NMDS1, yend = NMDS2),
+               arrow = arrow(length = unit(0.3, "cm")), 
+               color = "black", 
+               size = 1,
+               inherit.aes = FALSE) +
+  geom_text(data = trait_vectors_without_silene,
+            aes(x = NMDS1 * 1.1, y = NMDS2 * 1.1, label = trait),
+            color = "black", 
+            size = 3, 
+            fontface = "bold",
+            inherit.aes = FALSE)
+
+# Check the plot
+print(nmds_plot_without_silene_vectors)
+
+# Save plot
+ggsave(here("figures", "FigureS8_RQ1_NMDS_4traits_without_Silene_acaulis.png"), 
+       plot = nmds_plot_without_silene_vectors, width = 10, height = 8, dpi = 300)
+
+
+# 9. SAVE RESULTS --------------------------------------------------------------
+
+# Save NMDS objects all species
 save(nmds_4trait, nmds_plot_data_4trait,
      trait_vectors_4trait,
      permanova_4trait_full,
      file = here("data", "derived_data", "RQ1_NMDS_results.RData"))
+
+# Save NMDS objects (without Silene acaulis)
+save(nmds_without_silene, nmds_plot_data_without_silene,
+     trait_vectors_without_silene,
+     permanova_without_silene,
+     file = here("data", "derived_data", "RQ1_NMDS_without_Silene_results.RData"))
 
 # Save species lists
 species_4trait <- data.frame(StandardSpeciesName = rownames(complete_trait_matrix_4trait))
@@ -617,7 +750,7 @@ dev.off()
 # Use the trait matrix BEFORE removing incomplete cases
 pairwise_df_all <- as.data.frame(trait_matrix_4trait) |>
   mutate(Species = rownames(trait_matrix_4trait)) |>
-  left_join(caff_biomes %>% select(StandardSpeciesName, caff_biome_category),
+  left_join(caff_biomes %>% dplyr::select(StandardSpeciesName, caff_biome_category),
             by = c("Species" = "StandardSpeciesName")) |>
   rename(Biome = caff_biome_category) |>
   filter(!is.na(Biome))
@@ -680,8 +813,8 @@ plot1_base <- ggplot(plot1_data, aes(x = PlantHeight, y = SLA, color = Biome, fi
   annotate("text", x = -Inf, y = Inf, 
            label = paste0("n = ", n_total_1, " (", n_boreal_1, " boreal, ", n_tundra_1, " tundra)"), 
            hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
   labs(x = "Plant Height (log)", 
        y = "SLA (log)") +
   theme_classic() +
@@ -715,8 +848,8 @@ plot2_base <- ggplot(plot2_data, aes(x = PlantHeight, y = LeafN, color = Biome, 
   annotate("text", x = -Inf, y = Inf, 
            label = paste0("n = ", n_total_2, " (", n_boreal_2, " boreal, ", n_tundra_2, " tundra)"), 
            hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
   labs(x = "Plant Height (log)", 
        y = "Leaf N (log)") +
   theme_classic() +
@@ -750,8 +883,8 @@ plot3_base <- ggplot(plot3_data, aes(x = PlantHeight, y = SeedMass, color = Biom
   annotate("text", x = -Inf, y = Inf, 
            label = paste0("n = ", n_total_3, " (", n_boreal_3, " boreal, ", n_tundra_3, " tundra)"), 
            hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
   labs(x = "Plant Height (log)", 
        y = "Seed Mass (log)") +
   theme_classic() +
@@ -785,8 +918,8 @@ plot4_base <- ggplot(plot4_data, aes(x = SLA, y = LeafN, color = Biome, fill = B
   annotate("text", x = -Inf, y = Inf, 
            label = paste0("n = ", n_total_4, " (", n_boreal_4, " boreal, ", n_tundra_4, " tundra)"), 
            hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
   labs(x = "SLA (log)", 
        y = "Leaf N (log)") +
   theme_classic() +
@@ -820,8 +953,8 @@ plot5_base <- ggplot(plot5_data, aes(x = SLA, y = SeedMass, color = Biome, fill 
   annotate("text", x = -Inf, y = Inf, 
            label = paste0("n = ", n_total_5, " (", n_boreal_5, " boreal, ", n_tundra_5, " tundra)"), 
            hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black")) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue")) +
   labs(x = "SLA (log)", 
        y = "Seed Mass (log)") +
   theme_classic() +
@@ -855,9 +988,9 @@ plot6_base <- ggplot(plot6_data, aes(x = LeafN, y = SeedMass, color = Biome, fil
   annotate("text", x = -Inf, y = Inf, 
            label = paste0("n = ", n_total_6, " (", n_boreal_6, " boreal, ", n_tundra_6, " tundra)"), 
            hjust = -0.1, vjust = 1.5, size = 4, fontface = "bold") +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
-  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "black"),
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                     name = "Biome") +
   labs(x = "Leaf N (log)", 
        y = "Seed Mass (log)") +
@@ -880,23 +1013,23 @@ trait_bagplots <- plot_grid(plot1, plot2, plot3, plot4, plot5, plot6,
                             nrow = 2)
 
 # Save combined figure (png & pdf)
-ggsave(here("figures", "Figure2_pairwise_trait_comparisons_all_data.png"),
+ggsave(here("figures", "Figure3_pairwise_trait_comparisons_all_data.png"),
        plot = trait_bagplots, width = 20, height = 15, dpi = 600)
-ggsave(here("figures", "Figure2_pairwise_trait_comparisons_all_data.pdf"),
+ggsave(here("figures", "Figure3_pairwise_trait_comparisons_all_data.pdf"),
        plot = trait_bagplots, width = 20, height = 15, dpi = 600)
 
 # Save individual plots too
-ggsave(here("figures", "Figure21_pairwise_PlantHeight_SLA.png"), plot = plot1, 
+ggsave(here("figures", "Figure3a_pairwise_PlantHeight_SLA.png"), plot = plot1, 
        width = 6, height = 5, dpi = 600)
-ggsave(here("figures", "Figure2b_pairwise_PlantHeight_LeafN.png"), plot = plot2, 
+ggsave(here("figures", "Figure3b_pairwise_PlantHeight_LeafN.png"), plot = plot2, 
        width = 6, height = 5, dpi = 600)
-ggsave(here("figures", "Figure2c_pairwise_PlantHeight_SeedMass.png"), plot = plot3, 
+ggsave(here("figures", "Figure3c_pairwise_PlantHeight_SeedMass.png"), plot = plot3, 
        width = 6, height = 5, dpi = 600)
-ggsave(here("figures", "Figure2d_pairwise_SLA_LeafN.png"), plot = plot4, 
+ggsave(here("figures", "Figure3d_pairwise_SLA_LeafN.png"), plot = plot4, 
        width = 6, height = 5, dpi = 600)
-ggsave(here("figures", "Figure2e_pairwise_SLA_SeedMass.png"), plot = plot5, 
+ggsave(here("figures", "Figure3e_pairwise_SLA_SeedMass.png"), plot = plot5, 
        width = 6, height = 5, dpi = 600)
-ggsave(here("figures", "figure2f_pairwise_LeafN_SeedMass.png"), plot = plot6, 
+ggsave(here("figures", "figure3f_pairwise_LeafN_SeedMass.png"), plot = plot6, 
        width = 6, height = 5, dpi = 600)
 
 # END OF SCRIPT ----------------------------------------------------------------
