@@ -123,7 +123,6 @@ trait_availability <- species_trait_counts |>
 # Check availability broken down by trait
 print(trait_availability)
 
-
 # 3. CLEAN SPECIES NAMES -------------------------------------------------------
 
 ## 3.1. Remove morphospecies and suspect names ---------------------------------
@@ -1030,6 +1029,164 @@ ggsave(here("figures", "Figure3d_pairwise_SLA_LeafN.png"), plot = plot4,
 ggsave(here("figures", "Figure3e_pairwise_SLA_SeedMass.png"), plot = plot5, 
        width = 6, height = 5, dpi = 600)
 ggsave(here("figures", "figure3f_pairwise_LeafN_SeedMass.png"), plot = plot6, 
+       width = 6, height = 5, dpi = 600)
+
+# 11. VIOLIN PLOTS FOR INDIVIDUAL TRAITS --------------------------------------
+
+## 11.1. Remove outliers (>5 SD from mean) per biome --------------------------
+
+# Plant Height - remove outliers per biome
+plant_height_clean <- pairwise_df_all |>
+  filter(!is.na(PlantHeight), !is.na(Biome)) |>
+  group_by(Biome) |>
+  mutate(mean_val = mean(PlantHeight, na.rm = TRUE),
+         sd_val = sd(PlantHeight, na.rm = TRUE),
+         lower_bound = mean_val - 5 * sd_val,
+         upper_bound = mean_val + 5 * sd_val) |>
+  filter(PlantHeight >= lower_bound & PlantHeight <= upper_bound) |>
+  ungroup() |>
+  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+
+# SLA - remove outliers per biome
+sla_clean <- pairwise_df_all |>
+  filter(!is.na(SLA), !is.na(Biome)) |>
+  group_by(Biome) |>
+  mutate(mean_val = mean(SLA, na.rm = TRUE),
+         sd_val = sd(SLA, na.rm = TRUE),
+         lower_bound = mean_val - 5 * sd_val,
+         upper_bound = mean_val + 5 * sd_val) |>
+  filter(SLA >= lower_bound & SLA <= upper_bound) |>
+  ungroup() |>
+  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+
+# Leaf N - remove outliers per biome
+leafn_clean <- pairwise_df_all |>
+  filter(!is.na(LeafN), !is.na(Biome)) |>
+  group_by(Biome) |>
+  mutate(mean_val = mean(LeafN, na.rm = TRUE),
+         sd_val = sd(LeafN, na.rm = TRUE),
+         lower_bound = mean_val - 5 * sd_val,
+         upper_bound = mean_val + 5 * sd_val) |>
+  filter(LeafN >= lower_bound & LeafN <= upper_bound) |>
+  ungroup() |>
+  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+
+# Seed Mass - remove outliers per biome
+seedmass_clean <- pairwise_df_all |>
+  filter(!is.na(SeedMass), !is.na(Biome)) |>
+  group_by(Biome) |>
+  mutate(mean_val = mean(SeedMass, na.rm = TRUE),
+         sd_val = sd(SeedMass, na.rm = TRUE),
+         lower_bound = mean_val - 5 * sd_val,
+         upper_bound = mean_val + 5 * sd_val) |>
+  filter(SeedMass >= lower_bound & SeedMass <= upper_bound) |>
+  ungroup() |>
+  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+
+# Report how many data points were removed for each trait
+cat("\nOutliers removed (>5 SD from mean, calculated per biome):\n")
+cat("  PlantHeight:", nrow(pairwise_df_all |> filter(!is.na(PlantHeight), !is.na(Biome))) - nrow(plant_height_clean), 
+    "removed,", nrow(plant_height_clean), "remaining\n")
+cat("  SLA:", nrow(pairwise_df_all |> filter(!is.na(SLA), !is.na(Biome))) - nrow(sla_clean), 
+    "removed,", nrow(sla_clean), "remaining\n")
+cat("  LeafN:", nrow(pairwise_df_all |> filter(!is.na(LeafN), !is.na(Biome))) - nrow(leafn_clean), 
+    "removed,", nrow(leafn_clean), "remaining\n")
+cat("  SeedMass:", nrow(pairwise_df_all |> filter(!is.na(SeedMass), !is.na(Biome))) - nrow(seedmass_clean), 
+    "removed,", nrow(seedmass_clean), "remaining\n")
+
+## 11.2. Create violin plots ---------------------------------------------------
+
+# Plant Height
+violin_height <- ggplot(plant_height_clean, 
+                        aes(x = Biome, y = PlantHeight, fill = Biome)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                    labels = c("boreal" = "Boreal", "tundra" = "Tundra"),
+                    name = "Biome") +
+  scale_x_discrete(labels = c("boreal" = "Boreal", "tundra" = "Tundra")) +
+  labs(x = "", y = "Plant Height (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# SLA
+violin_sla <- ggplot(sla_clean, 
+                     aes(x = Biome, y = SLA, fill = Biome)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                    labels = c("boreal" = "Boreal", "tundra" = "Tundra"),
+                    name = "Biome") +
+  scale_x_discrete(labels = c("boreal" = "Boreal", "tundra" = "Tundra")) +
+  labs(x = "", y = "SLA (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Leaf N
+violin_leafn <- ggplot(leafn_clean, 
+                       aes(x = Biome, y = LeafN, fill = Biome)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                    labels = c("boreal" = "Boreal", "tundra" = "Tundra"),
+                    name = "Biome") +
+  scale_x_discrete(labels = c("boreal" = "Boreal", "tundra" = "Tundra")) +
+  labs(x = "", y = "Leaf N (log)") +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+# Seed Mass (with legend)
+violin_seedmass <- ggplot(seedmass_clean, 
+                          aes(x = Biome, y = SeedMass, fill = Biome)) +
+  geom_violin(alpha = 0.6, trim = FALSE) +
+  geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA) +
+  geom_jitter(width = 0.2, alpha = 0.4, size = 1.5) +
+  scale_fill_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                    labels = c("boreal" = "Boreal", "tundra" = "Tundra"),
+                    name = "Biome") +
+  scale_x_discrete(labels = c("boreal" = "Boreal", "tundra" = "Tundra")) +
+  labs(x = "", y = "Seed Mass (log)") +
+  theme_classic() +
+  theme(legend.position = "right",
+        legend.title = element_text(size = 12, face = "bold"),
+        legend.text = element_text(size = 11),
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"))
+
+## 11.3. Combine violin plots --------------------------------------------------
+
+# Combine into single figure
+trait_violins <- plot_grid(violin_height, violin_sla, violin_leafn, violin_seedmass,
+                           labels = c('a)', 'b)', 'c)', 'd)'),
+                           nrow = 2, ncol = 2)
+
+# Check the combined plot
+print(trait_violins)
+
+# Save combined figure
+ggsave(here("figures", "FigureS5_violin_plots_4traits.png"),
+       plot = trait_violins, width = 15, height = 10, dpi = 600)
+
+ggsave(here("figures", "FigureS5_violin_plots_4traits.pdf"),
+       plot = trait_violins, width = 12, height = 10, dpi = 600)
+
+# Save individual plots
+ggsave(here("figures", "FigureS5a_violin_PlantHeight.png"), plot = violin_height, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "FigureS5b_violin_SLA.png"), plot = violin_sla, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "FigureS5c_violin_LeafN.png"), plot = violin_leafn, 
+       width = 6, height = 5, dpi = 600)
+ggsave(here("figures", "FigureS5d_violin_SeedMass.png"), plot = violin_seedmass, 
        width = 6, height = 5, dpi = 600)
 
 # END OF SCRIPT ----------------------------------------------------------------
