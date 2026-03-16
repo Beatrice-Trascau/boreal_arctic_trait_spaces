@@ -406,7 +406,7 @@ print(nmds_plot_4trait_vectors)
 
 # Save plot
 ggsave(here("figures", "Figure2_RQ1_NMDS_4traits.png"), 
-       plot = nmds_plot_4trait_vectors, width = 10, height = 8, dpi = 300)
+       plot = nmds_plot_4trait_vectors, width = 10, height = 8, dpi = 600)
 
 # 8. NMDS WITHOUT SILENE ACAULIS -----------------------------------------------
 
