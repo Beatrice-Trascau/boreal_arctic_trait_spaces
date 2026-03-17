@@ -238,96 +238,101 @@ abline(v = 0, col = "blue", lty = 2)
 par(mfrow = c(1, 1))
 dev.off()
 
-## 3.4. Model visualisation ----------------------------------------------------
-
-# Create prediction data
-pred_data_ph <- data.frame(distance_to_boundary_km = seq(min(plant_height_final$distance_to_boundary_km),
-                                                         max(plant_height_final$distance_to_boundary_km),
-                                                         length.out = 200)) |>
-  mutate(distance_tundra_side = pmin(distance_to_boundary_km, 0),
-         distance_boreal_side = pmax(distance_to_boundary_km, 0))
-
-# Get predictions
-pred_data_ph$predicted <- predict(model_plant_height, newdata = pred_data_ph, level = 0)
-pred_data_ph$predicted_original <- exp(pred_data_ph$predicted)
-
-# Create plot
-plot_ph <- ggplot() +
-  geom_point(data = plant_height_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
-             alpha = 0.2, size = 1) +
-  geom_line(data = pred_data_ph,
-            aes(x = distance_to_boundary_km, y = predicted_original),
-            color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
-                     name = "Biome") +
-  scale_y_log10() +
-  labs(x = "Distance to Biome Boundary (km)",
-       y = "Plant Height (m, log scale)") +
-  theme_classic() +
-  theme(legend.position = "none",
-        axis.text = element_text(size = 11),
-        axis.title = element_text(size = 12, face = "bold"),
-        plot.title = element_text(size = 14, face = "bold"))
-
-# Check the plot
-print(plot_ph)
-
-# Save output
-ggsave(here("figures", "Figure4a_PlantHeight_breakpoint_fitted.png"),
-       plot = plot_ph, width = 10, height = 6, dpi = 600)
-
 ## 3.5. Run breakpoint model with estimated breakpoint -------------------------
 
 # Fit simple lm to find breakpoint
 simple_lm_ph <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
                    data = plant_height_final)
 
-# Fit segmented model
-tryCatch({
-  seg_model_ph <- segmented(simple_lm_ph, 
-                            seg.Z = ~ distance_to_boundary_km,
-                            psi = 0)
-  
-  breakpoint_estimate_ph <- seg_model_ph$psi[, "Est."]
-  breakpoint_se_ph <- seg_model_ph$psi[, "St.Err"]
-  
-  cat("  Estimated breakpoint:", round(breakpoint_estimate_ph, 2), "km\n")
-  cat("  Standard error:", round(breakpoint_se_ph, 2), "km\n")
-  cat("  95% CI: [", round(breakpoint_estimate_ph - 1.96*breakpoint_se_ph, 2), ",",
-      round(breakpoint_estimate_ph + 1.96*breakpoint_se_ph, 2), "]\n\n")
-  
-  # Fit lme with estimated breakpoint
-  plant_height_final <- plant_height_final |>
-    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_ph, 0),
-           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_ph, 0))
-  
-  model_ph_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
-                            random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
-                            data = plant_height_final,
-                            method = "REML")
-  
-  cat("  Model with estimated breakpoint:\n")
-  cat("    AIC:", round(AIC(model_ph_estimated), 2), "\n")
-  coefs_estimated_ph <- fixef(model_ph_estimated)
-  cat("    Tundra slope:", round(coefs_estimated_ph["distance_tundra_estimated"], 5), "\n")
-  cat("    Boreal slope:", round(coefs_estimated_ph["distance_boreal_estimated"], 5), "\n\n")
-  
-  estimated_converged_ph <- TRUE
-  
-}, error = function(e) {
-  cat("  ✗ Segmented model failed to converge\n")
-  cat("  Error:", e$message, "\n\n")
-  estimated_converged_ph <<- FALSE
-  breakpoint_estimate_ph <<- NA
-}) #breakpoint estimated at 6.6km
+# Fit segmented model to estimate breakpoint
+seg_model_ph <- segmented(simple_lm_ph, 
+                          seg.Z = ~ distance_to_boundary_km,
+                          psi = 0)
 
-# Compare models
-AICtab(model_plant_height, model_ph_estimated)
-# dAIC df
-# model_plant_height  0.0 6 
-# model_ph_estimated 12.1 6 
+# Extract breakpoint estimate and uncertainty
+breakpoint_estimate_ph <- seg_model_ph$psi[, "Est."]
+breakpoint_se_ph <- seg_model_ph$psi[, "St.Err"]
+breakpoint_ci_lower_ph <- breakpoint_estimate_ph - 1.96 * breakpoint_se_ph
+breakpoint_ci_upper_ph <- breakpoint_estimate_ph + 1.96 * breakpoint_se_ph
+
+cat("  Estimated breakpoint:", round(breakpoint_estimate_ph, 2), "km\n")
+cat("  Standard error:", round(breakpoint_se_ph, 2), "km\n")
+cat("  95% CI: [", round(breakpoint_ci_lower_ph, 2), ",",
+    round(breakpoint_ci_upper_ph, 2), "]\n\n")
+
+# Create piecewise distance variables based on ESTIMATED breakpoint
+plant_height_final <- plant_height_final |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_ph, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_ph, 0))
+
+# Fit mixed effects model with estimated breakpoint
+model_ph_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                          random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                          data = plant_height_final,
+                          method = "REML")
+
+# Model summary
+cat("  Model diagnostics:\n")
+cat("    AIC:", round(AIC(model_ph_estimated), 2), "\n")
+cat("    BIC:", round(BIC(model_ph_estimated), 2), "\n")
+coefs_estimated_ph <- fixef(model_ph_estimated)
+cat("    Tundra slope:", round(coefs_estimated_ph["distance_tundra_estimated"], 5), "\n")
+cat("    Boreal slope:", round(coefs_estimated_ph["distance_boreal_estimated"], 5), "\n\n")
+
+## 3.6. Model visualisation ----------------------------------------------------
+
+# Create prediction data
+pred_data_ph <- data.frame(
+  distance_to_boundary_km = seq(min(plant_height_final$distance_to_boundary_km),
+                                max(plant_height_final$distance_to_boundary_km),
+                                length.out = 200)
+) |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_ph, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_ph, 0))
+
+# Get predictions
+pred_data_ph$predicted <- predict(model_ph_estimated, newdata = pred_data_ph, level = 0)
+pred_data_ph$predicted_original <- exp(pred_data_ph$predicted)
+
+# Create plot with uncertainty shading
+plot_ph <- ggplot() +
+  # Shaded uncertainty region around breakpoint
+  annotate("rect", 
+           xmin = breakpoint_ci_lower_ph, xmax = breakpoint_ci_upper_ph,
+           ymin = -Inf, ymax = Inf,
+           fill = "gray70", alpha = 0.3) +
+  # Data points
+  geom_point(data = plant_height_final,
+             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             alpha = 0.2, size = 1) +
+  # Fitted line
+  geom_line(data = pred_data_ph,
+            aes(x = distance_to_boundary_km, y = predicted_original),
+            color = "#dcd0ff", linewidth = 1.5) +
+  # Estimated breakpoint (solid line)
+  geom_vline(xintercept = breakpoint_estimate_ph, 
+             linetype = "solid", color = "black", linewidth = 0.7) +
+  # Original boundary at 0 (dashed line for reference)
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", color = "gray50", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                     name = "Biome") +
+  scale_y_log10() +
+  labs(x = "Distance to Biome Boundary (km)",
+       y = "Plant Height (m, log scale)",
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_ph, 1), " +-0.63 km")) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"),
+        plot.title = element_text(size = 10, face = "bold"))
+
+# Check the plot
+print(plot_ph)
+
+# Save output
+ggsave(here("figures", "Figure4a_PlantHeight_breakpoint_estimated.png"),
+       plot = plot_ph, width = 10, height = 6, dpi = 600)
 
 # 4. SLA -----------------------------------------------------------------------
 
@@ -397,46 +402,6 @@ abline(v = 0, col = "blue", lty = 2)
 par(mfrow = c(1, 1))
 dev.off()
 
-## 4.4. SLA Visualisation ------------------------------------------------------
-
-# Create prediction data
-pred_data_sla <- data.frame(distance_to_boundary_km = seq(min(sla_final$distance_to_boundary_km),
-                                                          max(sla_final$distance_to_boundary_km),
-                                                          length.out = 200)) |>
-  mutate(distance_tundra_side = pmin(distance_to_boundary_km, 0),
-         distance_boreal_side = pmax(distance_to_boundary_km, 0))
-
-# Get predictions
-pred_data_sla$predicted <- predict(model_sla, newdata = pred_data_sla, level = 0)
-pred_data_sla$predicted_original <- exp(pred_data_sla$predicted)
-
-# Plot
-plot_sla <- ggplot() +
-  geom_point(data = sla_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
-             alpha = 0.2, size = 1) +
-  geom_line(data = pred_data_sla,
-            aes(x = distance_to_boundary_km, y = predicted_original),
-            color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
-                     name = "Biome") +
-  scale_y_log10() +
-  labs(x = "Distance to Biome Boundary (km)",
-       y = "SLA (mm²/mg, log scale)") +
-  theme_classic() +
-  theme(legend.position = "none",
-        axis.text = element_text(size = 11),
-        axis.title = element_text(size = 12, face = "bold"),
-        plot.title = element_text(size = 14, face = "bold"))
-
-# Check plot
-print(plot_sla)
-
-# Save
-ggsave(here("figures", "Figure4b_SLA_breakpoint_fitted.png"),
-       plot = plot_sla, width = 10, height = 6, dpi = 600)
-
 ## 4.5. Alternative model with estimated breakpoint ----------------------------
 
 # Fit simple lm to find breakpoint
@@ -444,47 +409,101 @@ simple_lm_sla <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
                     data = sla_final)
 
 # Fit segmented model
-tryCatch({
-  seg_model_sla <- segmented(simple_lm_sla, 
-                             seg.Z = ~ distance_to_boundary_km,
-                             psi = 0)
-  
-  breakpoint_estimate_sla <- seg_model_sla$psi[, "Est."]
-  breakpoint_se_sla <- seg_model_sla$psi[, "St.Err"]
-  
-  cat("  Estimated breakpoint:", round(breakpoint_estimate_sla, 2), "km\n")
-  cat("  Standard error:", round(breakpoint_se_sla, 2), "km\n")
-  cat("  95% CI: [", round(breakpoint_estimate_sla - 1.96*breakpoint_se_sla, 2), ",",
-      round(breakpoint_estimate_sla + 1.96*breakpoint_se_sla, 2), "]\n\n")
-  
-  sla_final <- sla_final %>%
-    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_sla, 0),
-           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_sla, 0))
-  
-  model_sla_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
-                             random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
-                             data = sla_final,
-                             method = "REML")
-  
-  cat("  Model with estimated breakpoint:\n")
-  cat("    AIC:", round(AIC(model_sla_estimated), 2), "\n")
-  coefs_estimated_sla <- fixef(model_sla_estimated)
-  cat("    Tundra slope:", round(coefs_estimated_sla["distance_tundra_estimated"], 5), "\n")
-  cat("    Boreal slope:", round(coefs_estimated_sla["distance_boreal_estimated"], 5), "\n\n")
-  
-  estimated_converged_sla <- TRUE
-  
-}, error = function(e) {
-  cat("  ✗ Segmented model failed to converge\n\n")
-  estimated_converged_sla <<- FALSE
-  breakpoint_estimate_sla <<- NA
-}) # breakpoint estimated at 184.11km
+seg_model_sla <- segmented(simple_lm_sla, 
+                           seg.Z = ~ distance_to_boundary_km,
+                           psi = 0)
 
-# Compare models
-AICtab(model_sla, model_sla_estimated)
-# dAIC df
-# model_sla            0.0 6 
-# model_sla_estimated 35.9 6 
+# Extract breakpoint estimate and uncertainty
+breakpoint_estimate_sla <- seg_model_sla$psi[, "Est."]
+breakpoint_se_sla <- seg_model_sla$psi[, "St.Err"]
+breakpoint_ci_lower_sla <- breakpoint_estimate_sla - 1.96 * breakpoint_se_sla
+breakpoint_ci_upper_sla <- breakpoint_estimate_sla + 1.96 * breakpoint_se_sla
+
+cat("  Estimated breakpoint:", round(breakpoint_estimate_sla, 2), "km\n")
+cat("  Standard error:", round(breakpoint_se_sla, 2), "km\n")
+cat("  95% CI: [", round(breakpoint_ci_lower_sla, 2), ",",
+    round(breakpoint_ci_upper_sla, 2), "]\n")
+
+# Test if breakpoint is significant
+davies_test_sla <- davies.test(simple_lm_sla, seg.Z = ~ distance_to_boundary_km)
+cat("  Davies test for breakpoint: p =", round(davies_test_sla$p.value, 4), "\n")
+
+# Compare models using AIC
+aic_simple_sla <- AIC(simple_lm_sla)
+aic_breakpoint_sla <- AIC(seg_model_sla)
+delta_aic_sla <- aic_simple_sla - aic_breakpoint_sla
+cat("  Simple model AIC:", round(aic_simple_sla, 2), "\n")
+cat("  Breakpoint model AIC:", round(aic_breakpoint_sla, 2), "\n")
+cat("  ΔAIC (simple - breakpoint):", round(delta_aic_sla, 2), 
+    ifelse(delta_aic_sla > 2, " - breakpoint model better", 
+           ifelse(delta_aic_sla < -2, " - simple model better", " - models similar")), "\n\n")
+
+# Create piecewise distance variables
+sla_final <- sla_final |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_sla, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_sla, 0))
+
+# Fit mixed effects model
+model_sla_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                           random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                           data = sla_final,
+                           method = "REML")
+
+# Model summary
+cat("  Model diagnostics:\n")
+cat("    AIC:", round(AIC(model_sla_estimated), 2), "\n")
+cat("    BIC:", round(BIC(model_sla_estimated), 2), "\n")
+coefs_estimated_sla <- fixef(model_sla_estimated)
+cat("    Tundra slope:", round(coefs_estimated_sla["distance_tundra_estimated"], 5), "\n")
+cat("    Boreal slope:", round(coefs_estimated_sla["distance_boreal_estimated"], 5), "\n\n")
+
+## 4.6. Model visualisation ----------------------------------------------------
+
+# Create prediction data
+pred_data_sla <- data.frame(
+  distance_to_boundary_km = seq(min(sla_final$distance_to_boundary_km),
+                                max(sla_final$distance_to_boundary_km),
+                                length.out = 200)
+) |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_sla, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_sla, 0))
+
+# Get predictions
+pred_data_sla$predicted <- predict(model_sla_estimated, newdata = pred_data_sla, level = 0)
+pred_data_sla$predicted_original <- exp(pred_data_sla$predicted)
+
+# Create plot with uncertainty
+plot_sla <- ggplot() +
+  annotate("rect", 
+           xmin = breakpoint_ci_lower_sla, xmax = breakpoint_ci_upper_sla,
+           ymin = -Inf, ymax = Inf,
+           fill = "gray70", alpha = 0.3) +
+  geom_point(data = sla_final,
+             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             alpha = 0.2, size = 1) +
+  geom_line(data = pred_data_sla,
+            aes(x = distance_to_boundary_km, y = predicted_original),
+            color = "#dcd0ff", linewidth = 1.5) +
+  geom_vline(xintercept = breakpoint_estimate_sla, 
+             linetype = "solid", color = "black", linewidth = 0.7) +
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", color = "gray50", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                     name = "Biome") +
+  scale_y_log10() +
+  labs(x = "Distance to Biome Boundary (km)",
+       y = expression(paste("SLA (mm"^2, " mg"^-1, ", log scale)")),
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_sla, 1), "+- 1.8 km")) +
+  theme_classic() +
+  theme(legend.position = "none",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"),
+        plot.title = element_text(size = 10, face = "bold"))
+
+print(plot_sla)
+
+ggsave(here("figures", "Figure4b_SLA_breakpoint_estimated.png"),
+       plot = plot_sla, width = 10, height = 6, dpi = 600)
 
 # 5. LEAF N --------------------------------------------------------------------
 
@@ -554,94 +573,108 @@ abline(v = 0, col = "blue", lty = 2)
 par(mfrow = c(1, 1))
 dev.off()
 
-## 5.4. Leaf N visualisation ---------------------------------------------------
+## 5.5. Alternative model with estimated breakpoint ----------------------------
+
+# Fit simple lm to find breakpoint
+simple_lm_leafn <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
+                      data = leafn_final)
+
+# Fit segmented model
+seg_model_leafn <- segmented(simple_lm_leafn, 
+                             seg.Z = ~ distance_to_boundary_km,
+                             psi = 0)
+
+# Extract breakpoint estimate and uncertainty
+breakpoint_estimate_leafn <- seg_model_leafn$psi[, "Est."]
+breakpoint_se_leafn <- seg_model_leafn$psi[, "St.Err"]
+breakpoint_ci_lower_leafn <- breakpoint_estimate_leafn - 1.96 * breakpoint_se_leafn
+breakpoint_ci_upper_leafn <- breakpoint_estimate_leafn + 1.96 * breakpoint_se_leafn
+
+cat("  Estimated breakpoint:", round(breakpoint_estimate_leafn, 2), "km\n")
+cat("  Standard error:", round(breakpoint_se_leafn, 2), "km\n")
+cat("  95% CI: [", round(breakpoint_ci_lower_leafn, 2), ",",
+    round(breakpoint_ci_upper_leafn, 2), "]\n")
+
+# Test if breakpoint is significant
+davies_test_leafn <- davies.test(simple_lm_leafn, seg.Z = ~ distance_to_boundary_km)
+cat("  Davies test for breakpoint: p =", round(davies_test_leafn$p.value, 4), "\n")
+
+# Compare models using AIC
+aic_simple_leafn <- AIC(simple_lm_leafn)
+aic_breakpoint_leafn <- AIC(seg_model_leafn)
+delta_aic_leafn <- aic_simple_leafn - aic_breakpoint_leafn
+cat("  Simple model AIC:", round(aic_simple_leafn, 2), "\n")
+cat("  Breakpoint model AIC:", round(aic_breakpoint_leafn, 2), "\n")
+cat("  ΔAIC (simple - breakpoint):", round(delta_aic_leafn, 2), 
+    ifelse(delta_aic_leafn > 2, " - breakpoint model better", 
+           ifelse(delta_aic_leafn < -2, " - simple model better", " - models similar")), "\n\n")
+
+# Create piecewise distance variables
+leafn_final <- leafn_final |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_leafn, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_leafn, 0))
+
+# Fit mixed effects model
+model_leafn_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                             random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                             data = leafn_final,
+                             method = "REML")
+
+# Model summary
+cat("  Model diagnostics:\n")
+cat("    AIC:", round(AIC(model_leafn_estimated), 2), "\n")
+cat("    BIC:", round(BIC(model_leafn_estimated), 2), "\n")
+coefs_estimated_leafn <- fixef(model_leafn_estimated)
+cat("    Tundra slope:", round(coefs_estimated_leafn["distance_tundra_estimated"], 5), "\n")
+cat("    Boreal slope:", round(coefs_estimated_leafn["distance_boreal_estimated"], 5), "\n\n")
+
+## 5.6. Model visualisation ----------------------------------------------------
 
 # Create prediction data
-pred_data_leafn <- data.frame(distance_to_boundary_km = seq(min(leafn_final$distance_to_boundary_km),
-                                                            max(leafn_final$distance_to_boundary_km),
-                                                            length.out = 200)) |>
-  mutate(distance_tundra_side = pmin(distance_to_boundary_km, 0),
-         distance_boreal_side = pmax(distance_to_boundary_km, 0))
+pred_data_leafn <- data.frame(
+  distance_to_boundary_km = seq(min(leafn_final$distance_to_boundary_km),
+                                max(leafn_final$distance_to_boundary_km),
+                                length.out = 200)
+) |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_leafn, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_leafn, 0))
 
 # Get predictions
-pred_data_leafn$predicted <- predict(model_leafn, newdata = pred_data_leafn, level = 0)
+pred_data_leafn$predicted <- predict(model_leafn_estimated, newdata = pred_data_leafn, level = 0)
 pred_data_leafn$predicted_original <- exp(pred_data_leafn$predicted)
 
-# Plot
+# Create plot with uncertainty
 plot_leafn <- ggplot() +
+  annotate("rect", 
+           xmin = breakpoint_ci_lower_leafn, xmax = breakpoint_ci_upper_leafn,
+           ymin = -Inf, ymax = Inf,
+           fill = "gray70", alpha = 0.3) +
   geom_point(data = leafn_final,
              aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
              alpha = 0.2, size = 1) +
   geom_line(data = pred_data_leafn,
             aes(x = distance_to_boundary_km, y = predicted_original),
             color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
+  geom_vline(xintercept = breakpoint_estimate_leafn, 
+             linetype = "solid", color = "black", linewidth = 0.7) +
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", color = "gray50", linewidth = 0.5) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
-       y = "Leaf N (mg/g, log scale)") +
+       y = "Leaf N (mg/g, log scale)",
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_leafn, 1), "+- 6.5 km")) +
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
         axis.title = element_text(size = 12, face = "bold"),
-        plot.title = element_text(size = 14, face = "bold"))
+        plot.title = element_text(size = 10, face = "bold"))
 
-# Check model
 print(plot_leafn)
 
-# Save figure
-ggsave(here("figures", "Figure4c_LeafN_breakpoint_fitted.png"),
+ggsave(here("figures", "Figure4c_LeafN_breakpoint_estimated.png"),
        plot = plot_leafn, width = 10, height = 6, dpi = 600)
-
-## 5.5. Alternative model with estimated breakpoint ----------------------------
-
-# Run simple lm to find breakpoint
-simple_lm_leafn <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
-                      data = leafn_final)
-
-# Fit segmented model
-tryCatch({
-  seg_model_leafn <- segmented(simple_lm_leafn, 
-                               seg.Z = ~ distance_to_boundary_km,
-                               psi = 0)
-  
-  breakpoint_estimate_leafn <- seg_model_leafn$psi[, "Est."]
-  breakpoint_se_leafn <- seg_model_leafn$psi[, "St.Err"]
-  
-  cat("  Estimated breakpoint:", round(breakpoint_estimate_leafn, 2), "km\n")
-  cat("  Standard error:", round(breakpoint_se_leafn, 2), "km\n")
-  cat("  95% CI: [", round(breakpoint_estimate_leafn - 1.96*breakpoint_se_leafn, 2), ",",
-      round(breakpoint_estimate_leafn + 1.96*breakpoint_se_leafn, 2), "]\n\n")
-  
-  leafn_final <- leafn_final %>%
-    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_leafn, 0),
-           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_leafn, 0))
-  
-  model_leafn_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
-                               random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
-                               data = leafn_final,
-                               method = "REML")
-  
-  cat("  Model with estimated breakpoint:\n")
-  cat("    AIC:", round(AIC(model_leafn_estimated), 2), "\n")
-  coefs_estimated_leafn <- fixef(model_leafn_estimated)
-  cat("    Tundra slope:", round(coefs_estimated_leafn["distance_tundra_estimated"], 5), "\n")
-  cat("    Boreal slope:", round(coefs_estimated_leafn["distance_boreal_estimated"], 5), "\n\n")
-  
-  estimated_converged_leafn <- TRUE
-  
-}, error = function(e) {
-  cat("  ✗ Segmented model failed to converge\n\n")
-  estimated_converged_leafn <<- FALSE
-  breakpoint_estimate_leafn <<- NA
-}) # breakpoint estimated at -107.11km
-
-# Compare models
-AICtab(model_leafn, model_leafn_estimated)
-# dAIC df
-# model_leafn_estimated  0.0 6 
-# model_leafn           12.6 6
 
 # 6. SEED MASS -----------------------------------------------------------------
 
@@ -711,58 +744,6 @@ abline(v = 0, col = "blue", lty = 2)
 par(mfrow = c(1, 1))
 dev.off()
 
-## 6.4. Seed Mass visualisation ------------------------------------------------
-
-# Create prediction data
-pred_data_seedmass <- data.frame(distance_to_boundary_km = seq(min(seedmass_final$distance_to_boundary_km),
-                                                               max(seedmass_final$distance_to_boundary_km),
-                                                               length.out = 200)) |>
-  mutate(distance_tundra_side = pmin(distance_to_boundary_km, 0),
-         distance_boreal_side = pmax(distance_to_boundary_km, 0))
-
-# Get predictions
-pred_data_seedmass$predicted <- predict(model_seedmass, newdata = pred_data_seedmass, level = 0)
-pred_data_seedmass$predicted_original <- exp(pred_data_seedmass$predicted)
-
-# Plot
-plot_seedmass <- ggplot() +
-  geom_point(data = seedmass_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
-             alpha = 0.2, size = 1) +
-  geom_line(data = pred_data_seedmass,
-            aes(x = distance_to_boundary_km, y = predicted_original),
-            color = "#dcd0ff", linewidth = 1.5) +
-  geom_vline(xintercept = 0, linetype = "dashed", color = "black", linewidth = 0.5) +
-  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
-                     name = "Biome") +
-  scale_y_log10() +
-  labs(x = "Distance to Biome Boundary (km)",
-       y = "Seed Mass (mg, log scale)") +
-  theme_classic() +
-  theme(legend.position = "right",
-        axis.text = element_text(size = 11),
-        axis.title = element_text(size = 12, face = "bold"),
-        plot.title = element_text(size = 14, face = "bold")) +
-  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
-
-# Check plot
-print(plot_seedmass)
-
-# Save plot
-ggsave(here("figures", "Figure3d_SeedMass_breakpoint_fitted.png"),
-       plot = plot_seedmass, width = 10, height = 6, dpi = 600)
-
-# Combine all model plots into a single one
-trait_breakpoints <- plot_grid(plot_ph, plot_sla, plot_leafn, plot_seedmass,
-                               labels = c("a)", "b)", "c)", "d"),
-                               nrow = 2)
-
-# Save combined plot
-ggsave(here("figures", "Figure4_traits_breakpoint_fitted.png"),
-       plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
-ggsave(here("figures", "Figure4_traits_breakpoint_fitted.pdf"),
-       plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
-
 ## 6.5. Alternative model with estimated breakpoint ----------------------------
 
 # Fit simple lm to find breakpoint
@@ -770,44 +751,114 @@ simple_lm_seedmass <- lm(log(CleanedTraitValue) ~ distance_to_boundary_km,
                          data = seedmass_final)
 
 # Fit segmented model
-tryCatch({
-  seg_model_seedmass <- segmented(simple_lm_seedmass, 
-                                  seg.Z = ~ distance_to_boundary_km,
-                                  psi = 0)
-  
-  breakpoint_estimate_seedmass <- seg_model_seedmass$psi[, "Est."]
-  breakpoint_se_seedmass <- seg_model_seedmass$psi[, "St.Err"]
-  
-  cat("  Estimated breakpoint:", round(breakpoint_estimate_seedmass, 2), "km\n")
-  cat("  Standard error:", round(breakpoint_se_seedmass, 2), "km\n")
-  cat("  95% CI: [", round(breakpoint_estimate_seedmass - 1.96*breakpoint_se_seedmass, 2), ",",
-      round(breakpoint_estimate_seedmass + 1.96*breakpoint_se_seedmass, 2), "]\n\n")
-  
-  seedmass_final <- seedmass_final %>%
-    mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_seedmass, 0),
-           distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_seedmass, 0))
-  
-  model_seedmass_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
-                                  random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
-                                  data = seedmass_final,
-                                  method = "REML")
-  
-  cat("  Model with estimated breakpoint:\n")
-  cat("    AIC:", round(AIC(model_seedmass_estimated), 2), "\n")
-  coefs_estimated_seedmass <- fixef(model_seedmass_estimated)
-  cat("    Tundra slope:", round(coefs_estimated_seedmass["distance_tundra_estimated"], 5), "\n")
-  cat("    Boreal slope:", round(coefs_estimated_seedmass["distance_boreal_estimated"], 5), "\n\n")
-  
-  estimated_converged_seedmass <- TRUE
-  
-}, error = function(e) {
-  cat("  ✗ Segmented model failed to converge\n\n")
-  estimated_converged_seedmass <<- FALSE
-  breakpoint_estimate_seedmass <<- NA
-}) #estimated breakpoint at -0.33
+seg_model_seedmass <- segmented(simple_lm_seedmass, 
+                                seg.Z = ~ distance_to_boundary_km,
+                                psi = 0)
 
-# Compare models
-AICtab(model_seedmass, model_seedmass_estimated) # equally good?
+# Extract breakpoint estimate and uncertainty
+breakpoint_estimate_seedmass <- seg_model_seedmass$psi[, "Est."]
+breakpoint_se_seedmass <- seg_model_seedmass$psi[, "St.Err"]
+breakpoint_ci_lower_seedmass <- breakpoint_estimate_seedmass - 1.96 * breakpoint_se_seedmass
+breakpoint_ci_upper_seedmass <- breakpoint_estimate_seedmass + 1.96 * breakpoint_se_seedmass
+
+cat("  Estimated breakpoint:", round(breakpoint_estimate_seedmass, 2), "km\n")
+cat("  Standard error:", round(breakpoint_se_seedmass, 2), "km\n")
+cat("  95% CI: [", round(breakpoint_ci_lower_seedmass, 2), ",",
+    round(breakpoint_ci_upper_seedmass, 2), "]\n")
+
+# Test if breakpoint is significant
+davies_test_seedmass <- davies.test(simple_lm_seedmass, seg.Z = ~ distance_to_boundary_km)
+cat("  Davies test for breakpoint: p =", round(davies_test_seedmass$p.value, 4), "\n")
+
+# Compare models using AIC
+aic_simple_seedmass <- AIC(simple_lm_seedmass)
+aic_breakpoint_seedmass <- AIC(seg_model_seedmass)
+delta_aic_seedmass <- aic_simple_seedmass - aic_breakpoint_seedmass
+cat("  Simple model AIC:", round(aic_simple_seedmass, 2), "\n")
+cat("  Breakpoint model AIC:", round(aic_breakpoint_seedmass, 2), "\n")
+cat("  ΔAIC (simple - breakpoint):", round(delta_aic_seedmass, 2), 
+    ifelse(delta_aic_seedmass > 2, " - breakpoint model better", 
+           ifelse(delta_aic_seedmass < -2, " - simple model better", " - models similar")), "\n\n")
+
+# Create piecewise distance variables
+seedmass_final <- seedmass_final |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_seedmass, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_seedmass, 0))
+
+# Fit mixed effects model
+model_seedmass_estimated <- lme(log(CleanedTraitValue) ~ distance_tundra_estimated + distance_boreal_estimated,
+                                random = list(StandardSpeciesName = ~ 1, site_name = ~ 1),
+                                data = seedmass_final,
+                                method = "REML")
+
+# Model summary
+cat("  Model diagnostics:\n")
+cat("    AIC:", round(AIC(model_seedmass_estimated), 2), "\n")
+cat("    BIC:", round(BIC(model_seedmass_estimated), 2), "\n")
+coefs_estimated_seedmass <- fixef(model_seedmass_estimated)
+cat("    Tundra slope:", round(coefs_estimated_seedmass["distance_tundra_estimated"], 5), "\n")
+cat("    Boreal slope:", round(coefs_estimated_seedmass["distance_boreal_estimated"], 5), "\n\n")
+
+## 6.5. Model visualisation ----------------------------------------------------
+
+# Create prediction data
+pred_data_seedmass <- data.frame(
+  distance_to_boundary_km = seq(min(seedmass_final$distance_to_boundary_km),
+                                max(seedmass_final$distance_to_boundary_km),
+                                length.out = 200)
+) |>
+  mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_seedmass, 0),
+         distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_seedmass, 0))
+
+# Get predictions
+pred_data_seedmass$predicted <- predict(model_seedmass_estimated, newdata = pred_data_seedmass, level = 0)
+pred_data_seedmass$predicted_original <- exp(pred_data_seedmass$predicted)
+
+# Create plot with uncertainty
+plot_seedmass <- ggplot() +
+  annotate("rect", 
+           xmin = breakpoint_ci_lower_seedmass, xmax = breakpoint_ci_upper_seedmass,
+           ymin = -Inf, ymax = Inf,
+           fill = "gray70", alpha = 0.3) +
+  geom_point(data = seedmass_final,
+             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             alpha = 0.2, size = 1) +
+  geom_line(data = pred_data_seedmass,
+            aes(x = distance_to_boundary_km, y = predicted_original),
+            color = "#dcd0ff", linewidth = 1.5) +
+  geom_vline(xintercept = breakpoint_estimate_seedmass, 
+             linetype = "solid", color = "black", linewidth = 0.7) +
+  geom_vline(xintercept = 0, 
+             linetype = "dashed", color = "gray50", linewidth = 0.5) +
+  scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
+                     name = "Biome") +
+  scale_y_log10() +
+  labs(x = "Distance to Biome Boundary (km)",
+       y = "Seed Mass (mg, log scale)",
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_seedmass, 1), "+- 2.65 km")) +
+  theme_classic() +
+  theme(legend.position = "right",
+        axis.text = element_text(size = 11),
+        axis.title = element_text(size = 12, face = "bold"),
+        plot.title = element_text(size = 10, face = "bold")) +
+  guides(color = guide_legend(override.aes = list(size = 3, alpha = 1)))
+
+print(plot_seedmass)
+
+ggsave(here("figures", "Figure4d_SeedMass_breakpoint_estimated.png"),
+       plot = plot_seedmass, width = 10, height = 6, dpi = 600)
+
+# Combine all model plots into a single one
+trait_breakpoints <- plot_grid(plot_ph, plot_sla, plot_leafn, plot_seedmass,
+                               labels = c("a)", "b)", "c)", "d)"),
+                               nrow = 2)
+
+# Save combined plot
+ggsave(here("figures", "Figure4_traits_breakpoint_estimated.png"),
+       plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
+ggsave(here("figures", "Figure4_traits_breakpoint_estimated.pdf"),
+       plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
+
 
 # 7. GAMs ----------------------------------------------------------------------
 
