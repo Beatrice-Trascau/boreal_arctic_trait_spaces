@@ -170,6 +170,7 @@ nrow(cleaned_traits_final)
 cleaned_traits_final <- cleaned_traits_final |>
   mutate(distance_boreal_side = pmin(distance_to_boundary_km, 0),  # negative values (boreal)
          distance_tundra_side = pmax(distance_to_boundary_km, 0))  # positive values (tundra)
+
 # 3. PLANT HEIGHT --------------------------------------------------------------
 
 ## 3.1. Prepare Plant Height data ----------------------------------------------
@@ -179,12 +180,32 @@ plant_height_final <- cleaned_traits_final |>
   filter(TraitNameNew == "PlantHeight") |>
   filter(!is.na(CleanedTraitValue))
 
-# Check number of records, species and sited
-nrow(plant_height_final) # 29601
-sum(plant_height_final$biome == "boreal") # 14072
-sum(plant_height_final$biome == "tundra") # 15529
-length(unique(plant_height_final$StandardSpeciesName)) # 441
-length(unique(plant_height_final$site_name)) # 300
+# Remove outliers separately by biome (≥5 SD on original scale)
+cat("\nPlant Height - removing outliers by biome:\n")
+n_before_boreal <- sum(plant_height_final$biome == "boreal")
+n_before_tundra <- sum(plant_height_final$biome == "tundra")
+
+plant_height_final <- plant_height_final %>%
+  group_by(biome) %>%
+  mutate(
+    mean_val = mean(CleanedTraitValue, na.rm = TRUE),
+    sd_val = sd(CleanedTraitValue, na.rm = TRUE),
+    lower_bound = mean_val - 5 * sd_val,
+    upper_bound = mean_val + 5 * sd_val
+  ) %>%
+  filter(CleanedTraitValue >= lower_bound & CleanedTraitValue <= upper_bound) %>%
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound) %>%
+  ungroup()
+
+cat("  Boreal: removed", n_before_boreal - sum(plant_height_final$biome == "boreal"), "outliers\n") #165
+cat("  Tundra: removed", n_before_tundra - sum(plant_height_final$biome == "tundra"), "outliers\n") #79
+
+# Check number of records, species and sites
+nrow(plant_height_final) #29357
+sum(plant_height_final$biome == "boreal") #13907
+sum(plant_height_final$biome == "tundra") #15450
+length(unique(plant_height_final$StandardSpeciesName)) #431
+length(unique(plant_height_final$site_name)) #300
 
 ## 3.2. Fit breakpoint model ---------------------------------------------------
 
@@ -260,6 +281,10 @@ cat("  Standard error:", round(breakpoint_se_ph, 2), "km\n")
 cat("  95% CI: [", round(breakpoint_ci_lower_ph, 2), ",",
     round(breakpoint_ci_upper_ph, 2), "]\n\n")
 
+# Test if breakpoint is significant
+davies_test_ph <- davies.test(simple_lm_ph, seg.Z = ~ distance_to_boundary_km)
+cat("  Davies test for breakpoint: p =", round(davies_test_ph$p.value, 4), "\n")
+
 # Create piecewise distance variables based on ESTIMATED breakpoint
 plant_height_final <- plant_height_final |>
   mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_ph, 0),
@@ -320,7 +345,7 @@ plot_ph <- ggplot() +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = "Plant Height (m, log scale)",
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_ph, 1), " +-0.63 km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_ph, 1), " \u00B1 ", "0.77", " km")) + 
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
@@ -343,12 +368,32 @@ sla_final <- cleaned_traits_final |>
   filter(TraitNameNew == "SLA") |>
   filter(!is.na(CleanedTraitValue))
 
-# Check number of records, species and sited
-nrow(sla_final) # 18023
-sum(sla_final$biome == "boreal") # 2769
-sum(sla_final$biome == "tundra") # 15254
-length(unique(sla_final$StandardSpeciesName)) # 401
-length(unique(sla_final$site_name)) # 188
+# Remove outliers separately by biome (values beyond ±5 SD, with positive lower bound)
+cat("\nSLA - removing outliers by biome:\n")
+n_before_boreal <- sum(sla_final$biome == "boreal")
+n_before_tundra <- sum(sla_final$biome == "tundra")
+
+sla_final <- sla_final %>%
+  group_by(biome) %>%
+  mutate(
+    mean_val = mean(CleanedTraitValue, na.rm = TRUE),
+    sd_val = sd(CleanedTraitValue, na.rm = TRUE),
+    lower_bound = max(0.1, mean_val - 5 * sd_val), # Minimum of 0.1 because we had some dubious values there
+    upper_bound = mean_val + 5 * sd_val
+  ) %>%
+  filter(CleanedTraitValue >= lower_bound & CleanedTraitValue <= upper_bound) %>%
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound) %>%
+  ungroup()
+
+cat("  Boreal: removed", n_before_boreal - sum(sla_final$biome == "boreal"), "outliers\n") #14
+cat("  Tundra: removed", n_before_tundra - sum(sla_final$biome == "tundra"), "outliers\n") #1068
+
+# Check the number of sites, species and records
+nrow(sla_final) #16941
+sum(sla_final$biome == "boreal") #2755
+sum(sla_final$biome == "tundra") #14186
+length(unique(sla_final$StandardSpeciesName))  #401
+length(unique(sla_final$site_name)) #188
 
 ## 4.2. Fit SLA breakpoint model -----------------------------------------------
 
@@ -493,7 +538,7 @@ plot_sla <- ggplot() +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = expression(paste("SLA (mm"^2, " mg"^-1, ", log scale)")),
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_sla, 1), "+- 1.8 km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_sla, 1), " \u00B1 ", "6.3", " km")) +
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
@@ -514,12 +559,32 @@ leafn_final <- cleaned_traits_final |>
   filter(TraitNameNew == "LeafN") |>
   filter(!is.na(CleanedTraitValue))
 
-# Check number of records, species and sites
-nrow(leafn_final) # 7239
-sum(leafn_final$biome == "boreal") # 1766
-sum(leafn_final$biome == "tundra") # 5473
-length(unique(leafn_final$StandardSpeciesName)) # 423
-length(unique(leafn_final$site_name)) # 210
+# Remove outliers separately by biome (≥5 SD on original scale)
+cat("\nLeaf N - removing outliers by biome:\n")
+n_before_boreal <- sum(leafn_final$biome == "boreal")
+n_before_tundra <- sum(leafn_final$biome == "tundra")
+
+leafn_final <- leafn_final %>%
+  group_by(biome) %>%
+  mutate(
+    mean_val = mean(CleanedTraitValue, na.rm = TRUE),
+    sd_val = sd(CleanedTraitValue, na.rm = TRUE),
+    lower_bound = mean_val - 5 * sd_val,
+    upper_bound = mean_val + 5 * sd_val
+  ) %>%
+  filter(CleanedTraitValue >= lower_bound & CleanedTraitValue <= upper_bound) %>%
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound) %>%
+  ungroup()
+
+cat("  Boreal: removed", n_before_boreal - sum(leafn_final$biome == "boreal"), "outliers\n") #0
+cat("  Tundra: removed", n_before_tundra - sum(leafn_final$biome == "tundra"), "outliers\n") #0
+
+# Check the number of sites, species and records
+nrow(leafn_final) #7239
+sum(leafn_final$biome == "boreal") #1766
+sum(leafn_final$biome == "tundra") #5473
+length(unique(leafn_final$StandardSpeciesName)) #423
+length(unique(leafn_final$site_name)) #210
 
 ## 5.2. Fit breakpoint model ---------------------------------------------------
 
@@ -664,7 +729,7 @@ plot_leafn <- ggplot() +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = "Leaf N (mg/g, log scale)",
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_leafn, 1), "+- 6.5 km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_leafn, 1), " \u00B1 ", "6.55 km")) +
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
@@ -685,12 +750,32 @@ seedmass_final <- cleaned_traits_final |>
   filter(TraitNameNew == "SeedMass") |>
   filter(!is.na(CleanedTraitValue))
 
+# Remove outliers separately by biome (≥5 SD on original scale)
+cat("\nSeed Mass - removing outliers by biome:\n")
+n_before_boreal <- sum(seedmass_final$biome == "boreal")
+n_before_tundra <- sum(seedmass_final$biome == "tundra")
+
+seedmass_final <- seedmass_final %>%
+  group_by(biome) %>%
+  mutate(
+    mean_val = mean(CleanedTraitValue, na.rm = TRUE),
+    sd_val = sd(CleanedTraitValue, na.rm = TRUE),
+    lower_bound = mean_val - 5 * sd_val,
+    upper_bound = mean_val + 5 * sd_val
+  ) %>%
+  filter(CleanedTraitValue >= lower_bound & CleanedTraitValue <= upper_bound) %>%
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound) %>%
+  ungroup()
+
+cat("  Boreal: removed", n_before_boreal - sum(seedmass_final$biome == "boreal"), "outliers\n") #0
+cat("  Tundra: removed", n_before_tundra - sum(seedmass_final$biome == "tundra"), "outliers\n") #11
+
 # Check the number of sites, species and records
-nrow(seedmass_final) # 814
+nrow(seedmass_final) #803
 sum(seedmass_final$biome == "boreal") # 23
-sum(seedmass_final$biome == "tundra") # 791
-length(unique(seedmass_final$StandardSpeciesName)) # 123
-length(unique(seedmass_final$site_name)) # 36
+sum(seedmass_final$biome == "tundra") #780
+length(unique(seedmass_final$StandardSpeciesName)) #121
+length(unique(seedmass_final$site_name)) #35
 
 ## 6.2. Fit Seed Mass model ----------------------------------------------------
 
@@ -835,7 +920,7 @@ plot_seedmass <- ggplot() +
   scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = "Seed Mass (mg, log scale)",
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_seedmass, 1), "+- 2.65 km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_seedmass, 1), " \u00B1 ", "10.26 km")) +
   theme_classic() +
   theme(legend.position = "right",
         axis.text = element_text(size = 11),
@@ -858,7 +943,6 @@ ggsave(here("figures", "Figure4_traits_breakpoint_estimated.png"),
        plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
 ggsave(here("figures", "Figure4_traits_breakpoint_estimated.pdf"),
        plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
-
 
 # 7. GAMs ----------------------------------------------------------------------
 
