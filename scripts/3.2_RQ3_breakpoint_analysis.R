@@ -315,47 +315,38 @@ pred_data_ph <- data.frame(
   mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_ph, 0),
          distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_ph, 0))
 
-# Get predictions
+# Get predictions (already in log scale)
 pred_data_ph$predicted <- predict(model_ph_estimated, newdata = pred_data_ph, level = 0)
-pred_data_ph$predicted_original <- exp(pred_data_ph$predicted)
 
-# Create plot with uncertainty shading
+# Create plot with logged values
 plot_ph <- ggplot() +
-  # Shaded uncertainty region around breakpoint
   annotate("rect", 
            xmin = breakpoint_ci_lower_ph, xmax = breakpoint_ci_upper_ph,
            ymin = -Inf, ymax = Inf,
            fill = "gray70", alpha = 0.3) +
-  # Data points
   geom_point(data = plant_height_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             aes(x = distance_to_boundary_km, y = log(CleanedTraitValue), color = biome),
              alpha = 0.2, size = 1) +
-  # Fitted line
   geom_line(data = pred_data_ph,
-            aes(x = distance_to_boundary_km, y = predicted_original),
+            aes(x = distance_to_boundary_km, y = predicted),
             color = "#dcd0ff", linewidth = 1.5) +
-  # Estimated breakpoint (solid line)
   geom_vline(xintercept = breakpoint_estimate_ph, 
              linetype = "solid", color = "black", linewidth = 0.7) +
-  # Original boundary at 0 (dashed line for reference)
   geom_vline(xintercept = 0, 
              linetype = "dashed", color = "gray50", linewidth = 0.5) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
-  scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = "Plant Height (m, log scale)",
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_ph, 1), " \u00B1 ", "0.77", " km")) + 
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_ph, 1), " ± 0.77 km")) + 
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
         axis.title = element_text(size = 12, face = "bold"),
         plot.title = element_text(size = 10, face = "bold"))
 
-# Check the plot
 print(plot_ph)
 
-# Save output
 ggsave(here("figures", "Figure4a_PlantHeight_breakpoint_estimated.png"),
        plot = plot_ph, width = 10, height = 6, dpi = 600)
 
@@ -504,7 +495,6 @@ cat("    Boreal slope:", round(coefs_estimated_sla["distance_boreal_estimated"],
 
 ## 4.6. Model visualisation ----------------------------------------------------
 
-# Create prediction data
 pred_data_sla <- data.frame(
   distance_to_boundary_km = seq(min(sla_final$distance_to_boundary_km),
                                 max(sla_final$distance_to_boundary_km),
@@ -513,21 +503,18 @@ pred_data_sla <- data.frame(
   mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_sla, 0),
          distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_sla, 0))
 
-# Get predictions
 pred_data_sla$predicted <- predict(model_sla_estimated, newdata = pred_data_sla, level = 0)
-pred_data_sla$predicted_original <- exp(pred_data_sla$predicted)
 
-# Create plot with uncertainty
 plot_sla <- ggplot() +
   annotate("rect", 
            xmin = breakpoint_ci_lower_sla, xmax = breakpoint_ci_upper_sla,
            ymin = -Inf, ymax = Inf,
            fill = "gray70", alpha = 0.3) +
   geom_point(data = sla_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             aes(x = distance_to_boundary_km, y = log(CleanedTraitValue), color = biome),
              alpha = 0.2, size = 1) +
   geom_line(data = pred_data_sla,
-            aes(x = distance_to_boundary_km, y = predicted_original),
+            aes(x = distance_to_boundary_km, y = predicted),
             color = "#dcd0ff", linewidth = 1.5) +
   geom_vline(xintercept = breakpoint_estimate_sla, 
              linetype = "solid", color = "black", linewidth = 0.7) +
@@ -535,10 +522,9 @@ plot_sla <- ggplot() +
              linetype = "dashed", color = "gray50", linewidth = 0.5) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
-  scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = expression(paste("SLA (mm"^2, " mg"^-1, ", log scale)")),
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_sla, 1), " \u00B1 ", "6.3", " km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_sla, 1), " ± 6.3 km")) +
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
@@ -695,7 +681,6 @@ cat("    Boreal slope:", round(coefs_estimated_leafn["distance_boreal_estimated"
 
 ## 5.6. Model visualisation ----------------------------------------------------
 
-# Create prediction data
 pred_data_leafn <- data.frame(
   distance_to_boundary_km = seq(min(leafn_final$distance_to_boundary_km),
                                 max(leafn_final$distance_to_boundary_km),
@@ -704,21 +689,18 @@ pred_data_leafn <- data.frame(
   mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_leafn, 0),
          distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_leafn, 0))
 
-# Get predictions
 pred_data_leafn$predicted <- predict(model_leafn_estimated, newdata = pred_data_leafn, level = 0)
-pred_data_leafn$predicted_original <- exp(pred_data_leafn$predicted)
 
-# Create plot with uncertainty
 plot_leafn <- ggplot() +
   annotate("rect", 
            xmin = breakpoint_ci_lower_leafn, xmax = breakpoint_ci_upper_leafn,
            ymin = -Inf, ymax = Inf,
            fill = "gray70", alpha = 0.3) +
   geom_point(data = leafn_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             aes(x = distance_to_boundary_km, y = log(CleanedTraitValue), color = biome),
              alpha = 0.2, size = 1) +
   geom_line(data = pred_data_leafn,
-            aes(x = distance_to_boundary_km, y = predicted_original),
+            aes(x = distance_to_boundary_km, y = predicted),
             color = "#dcd0ff", linewidth = 1.5) +
   geom_vline(xintercept = breakpoint_estimate_leafn, 
              linetype = "solid", color = "black", linewidth = 0.7) +
@@ -726,10 +708,9 @@ plot_leafn <- ggplot() +
              linetype = "dashed", color = "gray50", linewidth = 0.5) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
-  scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = "Leaf N (mg/g, log scale)",
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_leafn, 1), " \u00B1 ", "6.55 km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_leafn, 1), " ± 6.55 km")) +
   theme_classic() +
   theme(legend.position = "none",
         axis.text = element_text(size = 11),
@@ -740,6 +721,48 @@ print(plot_leafn)
 
 ggsave(here("figures", "Figure4c_LeafN_breakpoint_estimated.png"),
        plot = plot_leafn, width = 10, height = 6, dpi = 600)
+
+## 5.7. Separation of species model --------------------------------------------
+
+# Filter for boreal species and categorize by LOG Leaf N values
+boreal_leafn_categories <- leafn_final |>
+  filter(distance_to_boundary_km < 0) |>  # Boreal 
+  mutate(log_leafn = log(CleanedTraitValue),
+         leafn_category = case_when(
+           log_leafn >= 2 & log_leafn <= 4 ~ "High (log 2-4)",
+           log_leafn >= -0.5 & log_leafn <= 0.5 ~ "Low (log -0.5 to 0.5)",
+           TRUE ~ "Other"
+         )) |>
+  dplyr::select(StandardSpeciesName, CleanedTraitValue, log_leafn, 
+                distance_to_boundary_km, biome, leafn_category) |>
+  distinct(StandardSpeciesName, .keep_all = TRUE)  # One row per species (takes first occurrence)
+
+# Count species in each category
+leafn_summary <- boreal_leafn_categories |>
+  count(leafn_category)
+
+print(leafn_summary)
+
+# Get list of high Leaf N boreal species
+high_leafn_boreal <- boreal_leafn_categories |>
+  filter(leafn_category == "High (log 2-4)") |>
+  arrange(desc(log_leafn))
+
+cat("\nBoreal species with HIGH log Leaf N (2-4):\n")
+print(high_leafn_boreal, n = Inf)
+
+# Get list of low Leaf N boreal species
+low_leafn_boreal <- boreal_leafn_categories |>
+  filter(leafn_category == "Low (log -0.5 to 0.5)") |>
+  arrange(desc(log_leafn))
+
+cat("\nBoreal species with LOW log Leaf N (-0.5 to 0.5):\n")
+print(low_leafn_boreal, n = Inf)
+
+# Save the lists
+write.csv(boreal_leafn_categories,
+          here("data", "derived_data", "boreal_species_log_LeafN_all_categories.csv"),
+          row.names = FALSE)
 
 # 6. SEED MASS -----------------------------------------------------------------
 
@@ -886,7 +909,6 @@ cat("    Boreal slope:", round(coefs_estimated_seedmass["distance_boreal_estimat
 
 ## 6.5. Model visualisation ----------------------------------------------------
 
-# Create prediction data
 pred_data_seedmass <- data.frame(
   distance_to_boundary_km = seq(min(seedmass_final$distance_to_boundary_km),
                                 max(seedmass_final$distance_to_boundary_km),
@@ -895,21 +917,18 @@ pred_data_seedmass <- data.frame(
   mutate(distance_tundra_estimated = pmin(distance_to_boundary_km - breakpoint_estimate_seedmass, 0),
          distance_boreal_estimated = pmax(distance_to_boundary_km - breakpoint_estimate_seedmass, 0))
 
-# Get predictions
 pred_data_seedmass$predicted <- predict(model_seedmass_estimated, newdata = pred_data_seedmass, level = 0)
-pred_data_seedmass$predicted_original <- exp(pred_data_seedmass$predicted)
 
-# Create plot with uncertainty
 plot_seedmass <- ggplot() +
   annotate("rect", 
            xmin = breakpoint_ci_lower_seedmass, xmax = breakpoint_ci_upper_seedmass,
            ymin = -Inf, ymax = Inf,
            fill = "gray70", alpha = 0.3) +
   geom_point(data = seedmass_final,
-             aes(x = distance_to_boundary_km, y = CleanedTraitValue, color = biome),
+             aes(x = distance_to_boundary_km, y = log(CleanedTraitValue), color = biome),
              alpha = 0.2, size = 1) +
   geom_line(data = pred_data_seedmass,
-            aes(x = distance_to_boundary_km, y = predicted_original),
+            aes(x = distance_to_boundary_km, y = predicted),
             color = "#dcd0ff", linewidth = 1.5) +
   geom_vline(xintercept = breakpoint_estimate_seedmass, 
              linetype = "solid", color = "black", linewidth = 0.7) +
@@ -917,10 +936,9 @@ plot_seedmass <- ggplot() +
              linetype = "dashed", color = "gray50", linewidth = 0.5) +
   scale_color_manual(values = c("boreal" = "darkgreen", "tundra" = "darkblue"),
                      name = "Biome") +
-  scale_y_log10() +
   labs(x = "Distance to Biome Boundary (km)",
        y = "Seed Mass (mg, log scale)",
-       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_seedmass, 1), " \u00B1 ", "10.26 km")) +
+       title = paste0("Estimated breakpoint: ", round(breakpoint_estimate_seedmass, 1), " ± 10.26 km")) +
   theme_classic() +
   theme(legend.position = "right",
         axis.text = element_text(size = 11),
@@ -933,12 +951,11 @@ print(plot_seedmass)
 ggsave(here("figures", "Figure4d_SeedMass_breakpoint_estimated.png"),
        plot = plot_seedmass, width = 10, height = 6, dpi = 600)
 
-# Combine all model plots into a single one
+# Combine all plots
 trait_breakpoints <- plot_grid(plot_ph, plot_sla, plot_leafn, plot_seedmass,
                                labels = c("a)", "b)", "c)", "d)"),
                                nrow = 2)
 
-# Save combined plot
 ggsave(here("figures", "Figure4_traits_breakpoint_estimated.png"),
        plot = trait_breakpoints, width = 15, height = 10, dpi = 600)
 ggsave(here("figures", "Figure4_traits_breakpoint_estimated.pdf"),
