@@ -28,14 +28,14 @@ This document outlines the steps in the analysis of Paper 3: Tundra & Boreal Pla
 
 ## File Structure
 
-| Name                                             | Function                                                                                                                                              |
-|--------------------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------|
-| 0_setup.R                                        | Load all necessary packages and functions                                                                                                             |
-| 1.1_TRY_filtering.R                              | Filter TRY records to only include those in the boreal and tundra biomes                                                                              |
-| 1.2_TRY_species_list.R                           | Clean the species list extracted from TRY                                                                                                             |
-| 1.3_TRY_clean_traits_data.R                      | Clean the species names in the TRY traits dataset                                                                                                     |
-| 2.1_GBIF_biome_boundary_distance.R               | Calculate distances to biome boundaries for each species                                                                                              |
-| 3.1_exploration_biome_boundary_distance.R        | Explore & validate output of script 2.1 (interactive tables)                                                                                          |
+| Name | Function |
+|----|----|
+| 0_setup.R | Load all necessary packages and functions |
+| 1.1_TRY_filtering.R | Filter TRY records to only include those in the boreal and tundra biomes |
+| 1.2_TRY_species_list.R | Clean the species list extracted from TRY |
+| 1.3_TRY_clean_traits_data.R | Clean the species names in the TRY traits dataset |
+| 2.1_GBIF_biome_boundary_distance.R | Calculate distances to biome boundaries for each species |
+| 3.1_exploration_biome_boundary_distance.R | Explore & validate output of script 2.1 (interactive tables) |
 | 3.2_traits_biome_boundary_distance_relationships | Add additional information to traits dataframe (growth form, lhs strategy, distance to biome boundary for points), plotted relationships and ran NMDS |
 
 ```{r packages}
