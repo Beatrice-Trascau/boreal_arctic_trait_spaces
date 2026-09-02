@@ -269,9 +269,11 @@ species_biome_classification <- traits_median_df |>
 
 ## 7.1. Create trait matrix (PlantHeight, SLA, LeafN, SeedMass) ----------------
 
+seedless_traits <- c("PlantHeight", "SLA", "LeafN", "SeedMass")
+
 # Create wide format trait matrix
 trait_matrix_4trait <- traits_median_df |>
-  filter(TraitNameNew %in% key_traits) |>
+  filter(TraitNameNew %in% seedless_traits) |>
   dplyr::select(StandardSpeciesName, TraitNameNew, log_median_trait_value) |>
   pivot_wider(names_from = TraitNameNew, 
               values_from = log_median_trait_value) |>
@@ -294,7 +296,7 @@ set.seed(532826)
 # Run NMDS
 nmds_4trait <- metaMDS(complete_trait_matrix_4trait, 
                        distance = "euclidean",
-                       k = 3,
+                       k = 2,
                        trymax = 100)
 
 # Get the stress value
@@ -806,7 +808,7 @@ n_tundra_1 <- sum(plot1_data$Biome == "tundra")
 plot1_base <- ggplot(plot1_data, aes(x = PlantHeight, y = SLA, color = Biome, fill = Biome)) +
   stat_ellipse(geom = "polygon", alpha = 0.2, level = 0.95, linewidth = 1) +
   stat_ellipse(geom = "polygon", alpha = 0.1, level = 0.5, linewidth = 0.5, linetype = "dashed") +
-  geom_point(alpha = 0.6, size = 2.5) +
+  #geom_point(alpha = 0.6, size = 2.5) +
   stat_summary(fun = mean, geom = "point", size = 5, shape = 18) +
   # Add detailed sample size annotation
   annotate("text", x = -Inf, y = Inf, 
@@ -1045,7 +1047,7 @@ plant_height_clean <- pairwise_df_all |>
          upper_bound = mean_val + 5 * sd_val) |>
   filter(PlantHeight >= lower_bound & PlantHeight <= upper_bound) |>
   ungroup() |>
-  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound)
 
 # SLA - remove outliers per biome
 sla_clean <- pairwise_df_all |>
@@ -1057,7 +1059,7 @@ sla_clean <- pairwise_df_all |>
          upper_bound = mean_val + 5 * sd_val) |>
   filter(SLA >= lower_bound & SLA <= upper_bound) |>
   ungroup() |>
-  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound)
 
 # Leaf N - remove outliers per biome
 leafn_clean <- pairwise_df_all |>
@@ -1069,7 +1071,7 @@ leafn_clean <- pairwise_df_all |>
          upper_bound = mean_val + 5 * sd_val) |>
   filter(LeafN >= lower_bound & LeafN <= upper_bound) |>
   ungroup() |>
-  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound)
 
 # Seed Mass - remove outliers per biome
 seedmass_clean <- pairwise_df_all |>
@@ -1081,7 +1083,7 @@ seedmass_clean <- pairwise_df_all |>
          upper_bound = mean_val + 5 * sd_val) |>
   filter(SeedMass >= lower_bound & SeedMass <= upper_bound) |>
   ungroup() |>
-  select(-mean_val, -sd_val, -lower_bound, -upper_bound)
+  dplyr::select(-mean_val, -sd_val, -lower_bound, -upper_bound)
 
 # Report how many data points were removed for each trait
 cat("\nOutliers removed (>5 SD from mean, calculated per biome):\n")
@@ -1188,5 +1190,109 @@ ggsave(here("figures", "FigureS5c_violin_LeafN.png"), plot = violin_leafn,
        width = 6, height = 5, dpi = 600)
 ggsave(here("figures", "FigureS5d_violin_SeedMass.png"), plot = violin_seedmass, 
        width = 6, height = 5, dpi = 600)
+
+## 11.4. Linear models to compare traits between biomes ------------------------
+
+plant_height_biome_lm <- lm(PlantHeight ~ Biome, data = plant_height_clean)
+
+summary(plant_height_biome_lm)
+
+sla_biome_lm <- lm(SLA ~ Biome, data = sla_clean)
+summary(sla_biome_lm)
+
+leafn_biome_lm <- lm(LeafN ~ Biome, data = leafn_clean)
+summary(leafn_biome_lm)
+
+seed_mass_lm <- lm(SeedMass ~ Biome, data = seedmass_clean)
+summary(seed_mass_lm)
+
+## 11.5. Check distribution of the seed mass species ---------------------------
+
+# Get the 13 tundra species in NMDS
+tundra_seeds <- nmds_plot_data_4trait |>
+  filter(caff_biome_category == "tundra") |>
+  dplyr::select(StandardSpeciesName)
+
+# Get seed mass values for the 13 species
+seeds_13 <- seedmass_clean |>
+  filter(Species %in% tundra_seeds$StandardSpeciesName)
+
+# Plot density plot of values for the 13 plants
+p <- ggplot(seeds_13, aes(x=SeedMass)) + 
+  geom_density() +
+  xlim(-5, 2.6) +
+  geom_vline(xintercept = mean(seeds_13$SeedMass))
+p
+
+tundra_seedmass_clean <-seedmass_clean |>
+  filter(Biome == "tundra")
+
+# Plot density plot of values for all plants
+q <- ggplot(tundra_seedmass_clean, aes(x=SeedMass)) + 
+  geom_density() +
+  xlim(-5, 2.6) +
+  geom_vline(xintercept = mean(tundra_seedmass_clean$SeedMass))
+
+densities_seed_mass <- plot_grid(p, q, nrow = 2)
+
+# Compare mean of the subset of seed mass species (13) with the mean with the full seed mass data (33 species)
+#get the subset
+subset <- seeds_13 |>
+  dplyr::select(SeedMass) |>
+  mutate(type = "subset")
+
+# get seed mass values for all the tundra species contained
+full_set <- tundra_seedmass_clean |>
+  dplyr::select(SeedMass) |>
+  mutate(type = "full")
+ 
+# combine the two
+seedmass_comparison <- bind_rows(subset, full_set)
+
+# run lm to compare
+difference_lm <- lm(SeedMass ~ type, data = seedmass_comparison)
+summary(difference_lm)
+plot(difference_lm)
+
+## 11.6. Check if the subset of species (13) differs from the full dataset ------
+
+# Join the full dataset with the subset
+seeds_13_id <- seeds_13 |>
+  mutate(ID = T)
+
+a <- left_join(tundra_seedmass_clean, seeds_13_id, by = "Species") |>
+  mutate(ID = case_when(is.na(ID) ~ F,
+                        TRUE ~ ID))
+set.seed()
+
+# your full dataset (vector of 33 values)
+x <- a |>
+  dplyr::select(SeedMass.x, Species, ID)
+
+# logical or index vector identifying your 13 species
+subset_idx <- x |>
+  filter(ID == T)
+
+# observed mean
+obs_mean <- mean(subset_idx$SeedMass.x)
+
+# permutation
+n_perm <- 10000
+perm_means <- replicate(n_perm, {
+  mean(sample(x$SeedMass.x, size = length(subset_idx), replace = FALSE))
+})
+
+# two-sided p-value
+p_value <- mean(abs(perm_means - mean(x$SeedMass.x)) >= abs(obs_mean - mean(x$SeedMass.x)))
+
+# (alternative: compare directly to perm distribution)
+# p_value <- mean(abs(perm_means - obs_mean) >= abs(obs_mean - mean(x)))
+
+# visualize
+hist(perm_means, breaks = 30, main = "Permutation distribution")
+abline(v = obs_mean, col = "red", lwd = 2)
+abline(v = mean(x$SeedMass.x), col ="purple", lwd = 2)
+
+
 
 # END OF SCRIPT ----------------------------------------------------------------
