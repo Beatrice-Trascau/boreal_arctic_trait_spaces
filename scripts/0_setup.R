@@ -26,7 +26,8 @@ package_vec <- c("here", "terra", "sf", "geodata", "mapview",
                  "car", "kableExtra", "readr", "rnaturalearth", "rnaturalearthdata",
                  "rgbif", "purr", "DT", "MultiTraits", "BIEN", "vegan",
                  "openxlsx", "goeveg", "moments", "gllvm", "ggExtra", "nlme",
-                 "segmented", "bbmle", "mgcv", "DHARMa", "janitor")
+                 "segmented", "bbmle", "mgcv", "DHARMa", "janitor",
+                 "googledrive")
 
 # Execute the function
 sapply(package_vec, install_load_package)
@@ -60,5 +61,35 @@ create_project_structure <- function(base_path = "boreal_arctic_trait_space") {
 
 # Run function
 create_project_structure
+
+# 3. DOWLOAD DATA FROM DRIVE ---------------------------------------------------
+
+# Authenticate with Google - will open a new browser window
+drive_auth()
+# When running this for the first time:
+# 1. New browser window will open
+# 2. You will be asked to sign in to your Google account (you will need one)
+# 3. You will be asked to give permission to the googledrive package
+# 4. You can close the window after you approve
+# 5. A success message should appear in R
+
+# Check that authentication worked
+drive_user() 
+
+# Give file ID for derived_data
+file_id <- "1pHDlFHwG1KPwGuundvh-G-qbOy9H8EKS"
+
+# Download derived_data file from drive
+drive_download(file = as_id(file_id),
+               path = here("data", "derived_data"),  
+               overwrite = FALSE)
+
+# Give file ID for raw_data
+raw_data_file_id <- "1-aF8IVkStnY0qTNoUQSG-RO049y74fH8"
+
+# Download raw_data file from drive
+drive_download(file = as_id(raw_data_file_id),
+               path = here("data", "raw_data"),  
+               overwrite = FALSE)
 
 # END OF SCRIPT ----------------------------------------------------------------
