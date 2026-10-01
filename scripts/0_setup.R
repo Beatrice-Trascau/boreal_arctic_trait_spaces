@@ -65,7 +65,7 @@ create_project_structure
 # 3. DOWLOAD DATA FROM DRIVE ---------------------------------------------------
 
 # Authenticate with Google - will open a new browser window
-drive_auth()
+#drive_auth()
 # When running this for the first time:
 # 1. New browser window will open
 # 2. You will be asked to sign in to your Google account (you will need one)
@@ -74,22 +74,22 @@ drive_auth()
 # 5. A success message should appear in R
 
 # Check that authentication worked
-drive_user() 
+#drive_user() 
 
 # Give file ID for derived_data
-file_id <- "1pHDlFHwG1KPwGuundvh-G-qbOy9H8EKS"
+#file_id <- "1pHDlFHwG1KPwGuundvh-G-qbOy9H8EKS"
 
 # Download derived_data file from drive
-drive_download(file = as_id(file_id),
-               path = here("data", "derived_data"),  
-               overwrite = FALSE)
+# drive_download(file = as_id(file_id),
+#                path = here("data", "derived_data"),  
+#                overwrite = FALSE)
 
 # Give file ID for raw_data
-raw_data_file_id <- "1-aF8IVkStnY0qTNoUQSG-RO049y74fH8"
+#raw_data_file_id <- "1-aF8IVkStnY0qTNoUQSG-RO049y74fH8"
 
 # Download raw_data file from drive
-drive_download(file = as_id(raw_data_file_id),
-               path = here("data", "raw_data"),  
-               overwrite = FALSE)
+# drive_download(file = as_id(raw_data_file_id),
+#                path = here("data", "raw_data"),  
+#                overwrite = FALSE)
 
 # END OF SCRIPT ----------------------------------------------------------------
