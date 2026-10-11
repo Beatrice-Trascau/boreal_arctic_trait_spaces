@@ -12,21 +12,21 @@
 # Grid size (degrees) for grouping nearby plots into locations
 location_grid_deg <- 0.1
 
-# Minimum number of locations needed on each side of the treeline to fit the models
-# (trying to keep as many as possible)
-min_locations_per_side <- 2
+# Starting value of breakpoint search (km)
+seg_start_psi <- 0
 
-# Breakpoint search: candidates between these quantiles of distance, first
-# every coarse_step_km, then every fine_step_km around the best coarse value
-profile_trim <- 0.05
-coarse_step_km <- 20
-fine_step_km <- 1
-fine_window_km <- 30
+# Number of restarts from each starting value
+seg_restarts  <- 20
+
+# Spatial autocorrelation: distance classes of the correlogram (km)
+correlogram_step_km <- 100
+correlogram_max_km  <- 2000
 
 # Figure settings (same as script 3.1)
 biome_colours <- c("boreal" = "darkgreen", "tundra" = "darkblue")
 biome_labels <- c("boreal" = "Boreal", "tundra" = "Tundra")
 fit_line_colour <- "#dcd0ff"
+segmented_label <- "Segmented (no random effects)"
 fig_axis_text <- 16
 fig_axis_title <- 18
 fig_legend_text <- 16
@@ -39,8 +39,8 @@ fig_panel_label <- 22
 # Load packages
 library(here)
 source(here("scripts", "0_setup.R"))
-library(lme4)
-library(lmerTest) 
+library(segmented)   # breakpoint regression
+library(ape)         # Moran's I (spatial autocorrelation)
 
 # Load the cleaned traits
 load(here("data", "derived_data", "TRY_traits_cleaned_July2025.RData"))
@@ -62,7 +62,7 @@ boreal_forest <- st_union(global_biomes[global_biomes$BIOME == 6, ])
 tundra <- st_union(global_biomes[global_biomes$BIOME == 11 &
                                    (global_biomes$REALM == "PA" | global_biomes$REALM == "NA"), ])
 
-# Re-project biomes to North Pole Lamvert Azimuthal Equal Area (EPSG: 3574)
+# Re-project biomes to North Pole Lambert Azimuthal Equal Area (EPSG: 3574)
 boreal_sf <- st_transform(st_make_valid(boreal_forest), "EPSG:3574")
 tundra_sf <- st_transform(st_make_valid(tundra), "EPSG:3574")
 
@@ -70,9 +70,9 @@ tundra_sf <- st_transform(st_make_valid(tundra), "EPSG:3574")
 boreal_boundary <- st_boundary(boreal_sf)
 tundra_boundary <- st_boundary(tundra_sf)
 
-# Extract "treeline", i.e. the parts where the boreal and tundra biomes are touch
+# Extract the "treeline", i.e. the parts where the boreal and tundra biomes touch
 shared_edge <- st_intersection(boreal_boundary, st_buffer(tundra_sf, 1000))
-cat("  Length of treeline:", round(as.numeric(sum(st_length(shared_edge))) / 1000), "km\n")
+cat("  Length of treeline:", round(as.numeric(sum(st_length(shared_edge))) / 1000), "km\n") #93846
 
 # 2. PREPARE THE DATA ----------------------------------------------------------
 
@@ -93,7 +93,7 @@ traits_sf <- st_as_sf(traits_with_coords, coords = c("LON_site", "LAT_site"),
 in_boreal <- st_intersects(traits_sf, boreal_sf, sparse = FALSE)[, 1]
 in_tundra <- st_intersects(traits_sf, tundra_sf, sparse = FALSE)[, 1]
 
-# Initialize distance column
+# Add the biome
 traits_with_coords$biome <- NA_character_
 traits_with_coords$biome[in_boreal] <- "boreal"
 traits_with_coords$biome[in_tundra] <- "tundra"
@@ -104,6 +104,12 @@ traits_with_coords$distance_to_boundary_km[in_boreal] <-
   -as.numeric(st_distance(traits_sf[in_boreal, ], shared_edge)) / 1000
 traits_with_coords$distance_to_boundary_km[in_tundra] <-
   as.numeric(st_distance(traits_sf[in_tundra, ], shared_edge)) / 1000
+
+# Projected coordinates in km (EPSG:3574), used to calculate distances between
+# sites for the spatial autocorrelation check
+coords_km <- st_coordinates(traits_sf) / 1000
+traits_with_coords$x_km <- coords_km[, "X"]
+traits_with_coords$y_km <- coords_km[, "Y"]
 
 # Site identifier (records at the same coordinates)
 traits_with_coords <- traits_with_coords |>
@@ -170,10 +176,11 @@ cleaned_traits_final <- traits_with_coords |>
 # Check how many species are left after filtering
 cat("Species after CAFF filtering:", n_distinct(cleaned_traits_final$StandardSpeciesName),
     "| records:", nrow(cleaned_traits_final), "\n")
+# Species after CAFF filtering: 643 | records: 57964
 
 ## 2.4. Use standardised trait values (StdValue) ------------------------------
 
-# All analyses use StdValue.
+# N.B! All analyses use StdValue.
 
 # List the traits we are focusing on
 key_traits <- c("PlantHeight", "SLA", "LeafN", "SeedMass")
@@ -190,6 +197,12 @@ print(cleaned_traits_final |>
                   n_original_units = n_distinct(OrigUnitStr),
                   n_missing_StdValue = sum(is.na(StdValue)),
                   .groups = "drop"))
+# TraitNameNew UnitName n_records n_original_units n_missing_StdValue
+# <chr>        <chr>        <int>            <int>              <int>
+# 1 LeafN        mg/g          7239                5                  0
+# 2 PlantHeight  m            29601                4                  0
+# 3 SLA          mm2 mg-1     18023               12                  0
+# 4 SeedMass     mg             814                1                  0
 
 ## 2.5. Group nearby plots into locations --------------------------------------
 
@@ -199,54 +212,44 @@ cleaned_traits_final <- cleaned_traits_final |>
   mutate(location = paste0(round(LON_site / location_grid_deg), "_",
                            round(LAT_site / location_grid_deg)))
 
-# 3. MODEL FORMULAS ------------------------------------------------------------
+# 3. MODEL FORMULA -------------------------------------------------------------
 
-# Random effects: species, location, and site (plot) within location.
-# Distance is in km (distance_to_boundary_km): slopes are the change in the
-# log trait value per km towards the tundra.
-# In the breakpoint model, for a breakpoint at psi (km):
-#   below = pmin(distance_to_boundary_km - psi, 0) -> slope BELOW the breakpoint (boreal side)
-#   above = pmax(distance_to_boundary_km - psi, 0) -> slope ABOVE the breakpoint (tundra side)
+# A straight line (lm, no random effects) to which segmented() adds one
+# breakpoint in distance to the treeline
+lm_formula <- log_trait ~ distance_to_boundary_km
 
-# No breakpoint: one straight line
-linear_formula <- log_trait ~ distance_to_boundary_km +
-  (1 | StandardSpeciesName) + (1 | location) + (1 | site_name)
-
-# Breakpoint: separate slopes on each side
-breakpoint_formula <- log_trait ~ below + above +
-  (1 | StandardSpeciesName) + (1 | location) + (1 | site_name)
-
-# Robustness check: one side of the treeline on its own
-side_formula <- log_trait ~ distance_to_boundary_km +
-  (1 | StandardSpeciesName) + (1 | location) + (1 | site_name)
+# Distance classes of the correlogram (step .3 of each trait)
+correlogram_breaks <- seq(0, correlogram_max_km, by = correlogram_step_km)
 
 # 4. PLANT HEIGHT ------------------------------------------------------------
 
 ## 4.1. Prepare the data -------------------------------------------------------
 
-# Keep only records that can be logged (>0)
+# Keep only records that can be logged (> 0)
 plant_height_data <- cleaned_traits_final |>
   filter(TraitNameNew == "PlantHeight", !is.na(StdValue), StdValue > 0)
 
-# Calculate outliers per biome: values more than 5 SD from the biome mean on the
-# LOG scale (the scale used in the models). On the original scale, tall trees
-# and shrubs look extreme next to many small plants and would be removed.
+# Outliers per biome: values more than 5 SD from the biome mean on the LOG
+# scale (the scale used in the models)
 plant_height_data <- plant_height_data |>
   group_by(biome) |>
   mutate(lower_bound = exp(mean(log(StdValue)) - 5 * sd(log(StdValue))),
          upper_bound = exp(mean(log(StdValue)) + 5 * sd(log(StdValue)))) |>
   ungroup()
 
-# Check how many outliers were removed
+# Check how many outliers are removed
 cat("Plant height outliers removed:", sum(plant_height_data$StdValue < plant_height_data$lower_bound |
                                             plant_height_data$StdValue > plant_height_data$upper_bound), "\n")
 
-# Remove the outliers and log-transform the trait
+# Remove the outliers, log-transform the trait, and make the grouping
+# variables factors (needed for the random effects in the GAM script)
 plant_height_data <- plant_height_data |>
   filter(StdValue >= lower_bound, StdValue <= upper_bound) |>
   dplyr::select(-lower_bound, -upper_bound) |>
-  # log-transform the trait
-  mutate(log_trait = log(StdValue))
+  mutate(log_trait = log(StdValue),
+         species_f = factor(StandardSpeciesName),
+         location_f = factor(location),
+         site_f = factor(site_name))
 
 # Check how much data there is on each side of the treeline
 print(plant_height_data |>
@@ -256,357 +259,279 @@ print(plant_height_data |>
                   n_sites = n_distinct(site_name),
                   n_locations = n_distinct(location)))
 
-# Number of independent locations on each side
-n_locations_boreal_ph <- n_distinct(plant_height_data$location[plant_height_data$distance_to_boundary_km < 0])
-n_locations_tundra_ph <- n_distinct(plant_height_data$location[plant_height_data$distance_to_boundary_km >= 0])
+# biome  n_records n_species n_sites n_locations
+# <chr>      <int>     <int>   <int>       <int>
+# 1 boreal     14072       302      85          50
+# 2 tundra     15529       243     215          99
 
-# Check if there is enough locations
-enough_data_ph <- n_locations_boreal_ph >= min_locations_per_side &
-  n_locations_tundra_ph >= min_locations_per_side
+## 4.2. Segmented regression without random effects ----------------------------
+# A straight line (lm) is fitted first; segmented() then adds one breakpoint
+# and estimates where it lies, starting the search at seg_start_psi (the treeline) and
+# restarting seg_restarts times from other values. The model treats every
+# record as independent (no random effects), so its CIs and p-values are too
+# narrow if the residuals are spatially autocorrelated (checked in step .3).
 
-if (!enough_data_ph) {
-  cat("NOTE: fewer than", min_locations_per_side, "locations on one side of the treeline.",
-      "The breakpoint models cannot be fitted for Plant height.\n")
+# N.B. We are using an lm because of convergence issues when using species as a random effect (see email sent)
+
+# Straight line
+lm_ph <- lm(lm_formula, data = plant_height_data)
+
+# Breakpoint model
+seg_ph <- segmented(lm_ph, seg.Z = ~ distance_to_boundary_km, psi = seg_start_psi,
+                    control = seg.control(n.boot = seg_restarts))
+print(summary(seg_ph))
+# ***Regression Model with Segmented Relationship(s)***
+#   
+#   Call: 
+#   segmented.lm(obj = lm_ph, seg.Z = ~distance_to_boundary_km, psi = seg_start_psi, 
+#                control = seg.control(n.boot = seg_restarts))
+# 
+# Estimated Break-Point(s):
+#   Est. St.Err
+# psi1.distance_to_boundary_km -44.892  5.049
+# 
+# Coefficients of the linear terms:
+#   Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)                -2.527e+00  1.578e-02 -160.11   <2e-16 ***
+#   distance_to_boundary_km    -3.747e-03  8.484e-05  -44.17   <2e-16 ***
+#   U1.distance_to_boundary_km  3.324e-03  8.970e-05   37.05       NA    
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 1.153 on 29597 degrees of freedom
+# Multiple R-Squared: 0.0891,  Adjusted R-squared: 0.08901 
+# 
+# Boot restarting based on 6 samples. Last fit:
+#   Convergence attained in 2 iterations (rel. change 3.0545e-12)
+
+
+# Note on the summary: the coefficient 'distance_to_boundary_km' is the slope
+# BEFORE the breakpoint; 'U1.distance_to_boundary_km' is the CHANGE in slope at
+# the breakpoint (slope after = the two added up; slope() below gives both
+# slopes directly). Need to use the Davies test to check the p value
+
+# Davies test: is there a change in slope anywhere along the gradient?
+# (tests the straight line against a breakpoint model, allowing for the fact
+# that the breakpoint location is estimated)
+davies_ph <- davies.test(lm_ph, seg.Z = ~ distance_to_boundary_km)
+print(davies_ph)
+# Davies' test for a change in the slope
+# 
+# data:  formula = log_trait ~ distance_to_boundary_km ,   method = lm 
+# model = gaussian , link = identity  
+# segmented variable = distance_to_boundary_km
+# 'best' at = -149.22, n.points = 8, p-value < 2.2e-16
+# alternative hypothesis: two.sided
+
+# Breakpoint and its 95% CI (first column = estimate, then lower and upper limit)
+breakpoint_ci_ph <- confint(seg_ph)
+breakpoint_ph <- breakpoint_ci_ph[1, 1]
+breakpoint_lower_ph <- breakpoint_ci_ph[1, 2]
+breakpoint_upper_ph <- breakpoint_ci_ph[1, 3]
+
+# Slopes before (row 1) and after (row 2) the breakpoint, with 95% CIs
+# (columns: estimate, SE, t value, lower and upper CI limit)
+slopes_ph <- slope(seg_ph)$distance_to_boundary_km
+print(slopes_ph)
+# Est.    St.Err. t value   CI(95%).l  CI(95%).u
+# slope1 -0.00374720 8.4837e-05 -44.170 -0.00391350 -0.0035809
+# slope2 -0.00042361 2.9137e-05 -14.539 -0.00048073 -0.0003665
+
+# Delta AIC: positive = the breakpoint model fits better than the straight line
+daic_seg_ph <- AIC(lm_ph) - AIC(seg_ph)
+
+cat("\nPlant height - breakpoint:", round(breakpoint_ph), "km (95% CI",
+    round(breakpoint_lower_ph), "to", round(breakpoint_upper_ph), "km)",
+    ifelse(breakpoint_lower_ph <= 0 & breakpoint_upper_ph >= 0,
+           "- CI includes the treeline", "- CI does not include the treeline"), "\n",
+    "  Davies test p =", signif(davies_ph$p.value, 3),
+    "| delta AIC vs straight line =", round(daic_seg_ph, 1), "\n")
+# Plant height - breakpoint: -45 km (95% CI -55 to -35 km) - CI does not include the treeline 
+# Davies test p = 1.01e-292 | delta AIC vs straight line = 1446.9 
+
+## 4.3. Spatial autocorrelation of the residuals --------------------------------
+# Are the residuals of nearby sites more similar than those of distant sites?
+# If so, the records are not independent and the model's CIs and p-values
+# are too narrow. Residuals are averaged per site (sites with many records
+# would otherwise dominate), then:
+#   - Moran's I over all sites, with weights = 1 / distance between sites
+#     (I > 0 = nearby sites are similar; p < 0.05 = significant autocorrelation)
+#   - a correlogram: Moran's I among pairs of sites within each distance class
+#     (distance BETWEEN sites, not distance to the treeline), showing up to
+#     what distance sites remain similar
+
+# Extract residuals from the segmented regression
+plant_height_data$resid_seg <- residuals(seg_ph)
+
+# Mean residual per site, with the site's projected coordinates
+sites_ph <- plant_height_data |>
+  group_by(site_name) |>
+  summarise(x_km = first(x_km),
+            y_km = first(y_km),
+            resid_seg = mean(resid_seg),
+            n_records = n(),
+            .groups = "drop")
+
+# Distances between all pairs of sites (km)
+site_dist_ph <- as.matrix(dist(cbind(sites_ph$x_km, sites_ph$y_km)))
+
+# Moran's I over all sites (inverse-distance weights)
+weights_ph <- 1 / site_dist_ph
+weights_ph[!is.finite(weights_ph)] <- 0   # a site's distance to itself
+moran_seg_ph <- Moran.I(sites_ph$resid_seg, weights_ph)
+
+cat("\nPlant height - Moran's I of the segmented residuals (", nrow(sites_ph), " sites): I =",
+    round(moran_seg_ph$observed, 3), ", p =", signif(moran_seg_ph$p.value, 3), "\n")
+#Plant height - Moran's I of the segmented residuals ( 300  sites): I = 0.572 , p = 0
+
+# Correlogram: Moran's I among pairs of sites within each distance class
+correlogram_ph <- data.frame()
+for (i in seq_len(length(correlogram_breaks) - 1)) {
+  
+  # Weight 1 for pairs of sites within this distance class, 0 otherwise
+  class_weights <- (site_dist_ph > correlogram_breaks[i] &
+                      site_dist_ph <= correlogram_breaks[i + 1]) * 1
+  
+  # Skip classes without any pairs of sites
+  if (sum(class_weights) == 0) next
+  
+  moran_class <- Moran.I(sites_ph$resid_seg, class_weights)
+  
+  correlogram_ph <- bind_rows(correlogram_ph, data.frame(
+    Trait = "PlantHeight",
+    distance_km = (correlogram_breaks[i] + correlogram_breaks[i + 1]) / 2,
+    n_pairs = sum(class_weights) / 2,
+    Model = segmented_label,
+    morans_I = moran_class$observed,
+    p = moran_class$p.value))
 }
 
-## 4.2. Question 1: is there a breakpoint at the treeline (0 km)? --------------
+## 4.4. Model validation ---------------------------------------------------------
 
-# Compare two models:
-#   - one straight line along the whole gradient (no breakpoint)
-#   - a line that can change slope at the treeline (breakpoint at 0 km)
-# Both are fitted with maximum likelihood (REML = FALSE), which is needed to
-# compare models with different fixed effects. Because the breakpoint location
-# (0 km) is fixed in advance, the likelihood ratio test with 1 df is valid.
+# Residuals vs fitted values (no pattern and an even spread around 0) and a
+# Q-Q plot (points close to the line = roughly normal residuals)
+# N.B. some misfit always shows up in segmented regressions because of the nature of the model itself 
+# that being said, the QQ plot doesnt look as bad as expected
 
-# Add the breakpoint variables for a breakpoint at 0 km
-data_treeline_ph <- plant_height_data |>
-  mutate(below = pmin(distance_to_boundary_km, 0),    # boreal side
-         above = pmax(distance_to_boundary_km, 0))    # tundra side
-
-# Run the linear model
-model_linear_ph <- lmerTest::lmer(linear_formula, data = data_treeline_ph, REML = FALSE)
-
-# Run the model with breakpoint at "treeline" (0km)
-model_treeline_ml_ph <- lmerTest::lmer(breakpoint_formula, data = data_treeline_ph,
-                                       REML = FALSE)
-
-# Use a likelihood ratio test to check if the breakpoint model fits significantly better
-lr_treeline_ph <- 2 * (as.numeric(logLik(model_treeline_ml_ph)) -
-                         as.numeric(logLik(model_linear_ph)))
-p_treeline_ph <- pchisq(lr_treeline_ph, df = 1, lower.tail = FALSE)
-
-# Extract delta AIC
-daic_treeline_ph <- AIC(model_linear_ph) - AIC(model_treeline_ml_ph)
-
-# Quick output of Q1 result
-cat("\nQUESTION 1 - breakpoint at the treeline: LR =", round(lr_treeline_ph, 2),
-    ", p =", signif(p_treeline_ph, 3),
-    ", delta AIC =", round(daic_treeline_ph, 2),
-    "(positive = breakpoint model fits better)\n")
-
-# Fit slopes on each side of the "treeline"the same breakpoint model refitted with
-# REML, which gives better estimates of the random effects for reporting.
-# 'below' = boreal-side slope, 'above' = tundra-side slope (per km)
-model_treeline_ph <- lmerTest::lmer(breakpoint_formula, data = data_treeline_ph,
-                                    REML = TRUE)
-
-# Print summary 
-print(summary(model_treeline_ph))
-
-# Get the coefficients
-coefs_treeline_ph <- summary(model_treeline_ph)$coefficients
-
-# Model diagnostics: residuals vs fitted values (should show no pattern) and
-# a Q-Q plot (points should lie close to the line)
-residuals_ph <- residuals(model_treeline_ph, type = "pearson")
-png(here("figures", "RQ3_PlantHeight_model_diagnostics.png"),
-    width = 10, height = 5, units = "in", res = 300)
+png(here("figures", "RQ3_PlantHeight_validation_segmented.png"),
+    width = 12, height = 5, units = "in", res = 200)
 par(mfrow = c(1, 2))
-plot(fitted(model_treeline_ph), residuals_ph,
-     xlab = "Fitted values", ylab = "Pearson residuals", main = "Plant height")
+
+plot(fitted(seg_ph), plant_height_data$resid_seg, pch = 16, cex = 0.4, col = rgb(0, 0, 0, 0.2),
+     xlab = "Fitted values", ylab = "Residuals",
+     main = "Plant height - Segmented: residuals vs fitted")
 abline(h = 0, col = "red", lty = 2)
-qqnorm(residuals_ph, main = "Plant height - Q-Q Plot")
-qqline(residuals_ph, col = "red")
+
+qqnorm(plant_height_data$resid_seg, pch = 16, cex = 0.4, main = "Plant height - Segmented: Q-Q plot")
+qqline(plant_height_data$resid_seg, col = "red")
+
 par(mfrow = c(1, 1))
 dev.off()
 
-## 4.3. Question 2: is there a breakpoint somewhere else? ----------------------
-# The breakpoint model is fitted with the breakpoint at many candidate
-# locations. The best-fitting one is compared with (a) no breakpoint and
-# (b) a breakpoint at the treeline. Candidates whose fit is not significantly
-# worse than the best (deviance difference <= 3.84) form the 95% CI.
-# Only trust the location if the profile has one clear dip and the CI does not
-# reach the edge of the search range.
+## 4.5. Figure -------------------------------------------------------------------
 
-# Range of candidates: the central 90% of the data
-search_range_ph <- quantile(plant_height_data$distance_to_boundary_km, c(profile_trim, 1 - profile_trim))
+# All records with the fitted segmented line, the estimated breakpoint (solid
+# line) and its 95% CI (grey band), and the treeline (dashed line)
 
-# Step 1: coarse grid of candidates; fit the breakpoint model at each one and
-# store how well it fits (log-likelihood)
-coarse_psi_ph <- seq(ceiling(search_range_ph[1]), floor(search_range_ph[2]),
-                     by = coarse_step_km)
-coarse_loglik_ph <- numeric(length(coarse_psi_ph))
-cat("Fitting", length(coarse_psi_ph), "coarse candidate breakpoints...\n")
+# Combine into sigle df
+seg_line_ph <- data.frame(distance_to_boundary_km = seq(min(plant_height_data$distance_to_boundary_km),
+                                                        max(plant_height_data$distance_to_boundary_km),
+                                                        length.out = 300))
+# Predict values
+seg_line_ph$predicted <- predict(seg_ph, newdata = seg_line_ph)
 
-for (i in seq_along(coarse_psi_ph)) {
-  candidate_data <- plant_height_data |>
-    mutate(below = pmin(distance_to_boundary_km - coarse_psi_ph[i], 0),
-           above = pmax(distance_to_boundary_km - coarse_psi_ph[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  coarse_loglik_ph[i] <- as.numeric(logLik(candidate_model))
-}
-
-# Step 2: finer grid of candidates around the best coarse candidate
-best_coarse_ph <- coarse_psi_ph[which.max(coarse_loglik_ph)]
-fine_psi_ph <- seq(max(ceiling(search_range_ph[1]), best_coarse_ph - fine_window_km),
-                   min(floor(search_range_ph[2]), best_coarse_ph + fine_window_km),
-                   by = fine_step_km)
-fine_psi_ph <- setdiff(fine_psi_ph, coarse_psi_ph)   # skip candidates already fitted
-fine_loglik_ph <- numeric(length(fine_psi_ph))
-cat("Fitting", length(fine_psi_ph), "fine candidate breakpoints...\n")
-
-for (i in seq_along(fine_psi_ph)) {
-  candidate_data <- plant_height_data |>
-    mutate(below = pmin(distance_to_boundary_km - fine_psi_ph[i], 0),
-           above = pmax(distance_to_boundary_km - fine_psi_ph[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  fine_loglik_ph[i] <- as.numeric(logLik(candidate_model))
-}
-
-# All candidates, sorted by distance. delta_deviance = how much worse each
-# candidate fits than the best one (0 = the best candidate)
-profile_ph <- data.frame(psi_km = c(coarse_psi_ph, fine_psi_ph),
-                         logLik = c(coarse_loglik_ph, fine_loglik_ph)) |>
-  arrange(psi_km) |>
-  mutate(delta_deviance = 2 * (max(logLik) - logLik))
-
-# Best breakpoint
-best_index_ph <- which.max(profile_ph$logLik)
-breakpoint_ph <- profile_ph$psi_km[best_index_ph]
-
-# 95% CI: starting at the best candidate, move outwards in both directions for
-# as long as the candidates fit almost as well (delta_deviance <= 3.84)
-ci_threshold <- qchisq(0.95, df = 1)
-
-lower_index_ph <- best_index_ph
-while (lower_index_ph > 1 &&
-       profile_ph$delta_deviance[lower_index_ph - 1] <= ci_threshold) {
-  lower_index_ph <- lower_index_ph - 1
-}
-
-upper_index_ph <- best_index_ph
-while (upper_index_ph < nrow(profile_ph) &&
-       profile_ph$delta_deviance[upper_index_ph + 1] <= ci_threshold) {
-  upper_index_ph <- upper_index_ph + 1
-}
-
-breakpoint_lower_ph <- profile_ph$psi_km[lower_index_ph]
-breakpoint_upper_ph <- profile_ph$psi_km[upper_index_ph]
-
-# Warning signs that the location cannot be trusted:
-#   - the CI reaches the first or last candidate (the edge of the search range)
-#   - a second, separate group of candidates also fits almost as well
-ci_at_edge_ph <- lower_index_ph == 1 | upper_index_ph == nrow(profile_ph)
-second_dip_ph <- any(profile_ph$delta_deviance <= ci_threshold &
-                       (seq_len(nrow(profile_ph)) < lower_index_ph |
-                          seq_len(nrow(profile_ph)) > upper_index_ph))
-
-# (a) Best breakpoint vs no breakpoint: delta AIC, counting the breakpoint
-#     location as an extra estimated parameter (positive = breakpoint better)
-daic_best_vs_linear_ph <- 2 * (max(profile_ph$logLik) -
-                                 as.numeric(logLik(model_linear_ph))) - 2 * 2
-
-# (b) Best breakpoint vs breakpoint at the treeline: deviance difference
-#     (below 3.84 = the treeline fits about as well as the best location)
-deviance_treeline_vs_best_ph <- 2 * (max(profile_ph$logLik) -
-                                       as.numeric(logLik(model_treeline_ml_ph)))
-
-cat("\nQUESTION 2 - best breakpoint:", breakpoint_ph, "km (95% CI",
-    breakpoint_lower_ph, "to", breakpoint_upper_ph, "km)\n",
-    "  delta AIC vs no breakpoint:", round(daic_best_vs_linear_ph, 2), "\n",
-    "  treeline vs best location, deviance difference:",
-    round(deviance_treeline_vs_best_ph, 2),
-    ifelse(deviance_treeline_vs_best_ph <= ci_threshold,
-           "(treeline fits about as well)", "(treeline fits significantly worse)"), "\n",
-    ifelse(ci_at_edge_ph, "  WARNING: CI reaches the edge of the search range\n", ""),
-    ifelse(second_dip_ph, "  WARNING: second dip in the profile\n", ""))
-
-# Supplementary figure: how well each candidate fits. Candidates below the red
-# line lie within the 95% CI; the solid line marks the best candidate and the
-# dashed grey line the treeline.
-plot_profile_ph <- ggplot(profile_ph, aes(x = psi_km, y = delta_deviance)) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 1) +
-  geom_hline(yintercept = ci_threshold, linetype = "dashed", colour = "red") +
-  geom_vline(xintercept = breakpoint_ph, colour = "black") +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
-  labs(x = "Candidate breakpoint (km from the treeline)",
-       y = "Deviance relative to best breakpoint",
-       title = "Plant height: points below the red line lie within the 95% CI") +
-  theme_rq3
-
-# Save figure 
-ggsave(here("figures", "FigureS10_RQ3_PlantHeight_breakpoint_profile.png"),
-       plot = plot_profile_ph, width = 9, height = 6, dpi = 300)
-
-
-## 4.4. Figure -------------------------------------------------------------------
-
-# All records (log scale) against distance to the treeline, with the fitted
-# line from the breakpoint model at the treeline (step .2). The title gives the
-# result of Question 1; the labels give the slope on each side.
-
-# Slope labels, converted from log-scale slopes to % change per km
-label_boreal_ph <- paste0("Boreal side: ",
-                          sprintf("%+.2f", 100 * (exp(coefs_treeline_ph["below", "Estimate"]) - 1)),
-                          "% per km\np = ",
-                          sprintf("%.3f", coefs_treeline_ph["below", "Pr(>|t|)"]))
-label_tundra_ph <- paste0("Tundra side: ",
-                          sprintf("%+.2f", 100 * (exp(coefs_treeline_ph["above", "Estimate"]) - 1)),
-                          "% per km\np = ",
-                          sprintf("%.3f", coefs_treeline_ph["above", "Pr(>|t|)"]))
-
-# Title: result of the test for a breakpoint at the treeline
-title_ph <- paste0("Breakpoint at the treeline: LR = ", sprintf("%.2f", lr_treeline_ph),
-                   ", p = ", sprintf("%.3f", p_treeline_ph),
-                   ", \u0394AIC = ", sprintf("%.1f", daic_treeline_ph))
-
-# Fitted line for an average species, location and site (random effects left
-# out with re.form = NA)
-line_ph <- data.frame(distance_to_boundary_km = seq(min(plant_height_data$distance_to_boundary_km),
-                                                    max(plant_height_data$distance_to_boundary_km),
-                                                    length.out = 200)) |>
-  mutate(below = pmin(distance_to_boundary_km, 0),
-         above = pmax(distance_to_boundary_km, 0))
-line_ph$predicted <- predict(model_treeline_ph, newdata = line_ph, re.form = NA)
+# Slope labels as % change per km
+label_before_ph <- paste0("Before breakpoint: ",
+                          sprintf("%+.3f", 100 * (exp(slopes_ph[1, 1]) - 1)), "% per km")
+label_after_ph <- paste0("After breakpoint: ",
+                         sprintf("%+.3f", 100 * (exp(slopes_ph[2, 1]) - 1)), "% per km")
+title_seg_ph <- paste0("Breakpoint: ", round(breakpoint_ph), " km (95% CI ",
+                       round(breakpoint_lower_ph), " to ", round(breakpoint_upper_ph),
+                       "); Davies p ", ifelse(davies_ph$p.value < 0.001, "< 0.001",
+                                              paste0("= ", sprintf("%.3f", davies_ph$p.value))),
+                       ", \u0394AIC = ", sprintf("%.1f", daic_seg_ph))
 
 # Plot figure
-(plot_ph <- ggplot() +
+(plot_seg_ph <- ggplot() +
+  annotate("rect", xmin = breakpoint_lower_ph, xmax = breakpoint_upper_ph,
+           ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.3) +
   geom_point(data = plant_height_data, aes(x = distance_to_boundary_km, y = log_trait, colour = biome),
              alpha = 0.2, size = 1) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "gray30", linewidth = 0.7) +
-  geom_line(data = line_ph, aes(x = distance_to_boundary_km, y = predicted),
+  geom_vline(xintercept = breakpoint_ph, colour = "black", linewidth = 0.7) +
+  geom_line(data = seg_line_ph, aes(x = distance_to_boundary_km, y = predicted),
             colour = fit_line_colour, linewidth = 1.5) +
-  annotate("text", x = -Inf, y = Inf, label = label_boreal_ph,
+  annotate("text", x = -Inf, y = Inf, label = label_before_ph,
            hjust = -0.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
-  annotate("text", x = Inf, y = Inf, label = label_tundra_ph,
+  annotate("text", x = Inf, y = Inf, label = label_after_ph,
            hjust = 1.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
   scale_colour_manual(values = biome_colours, labels = biome_labels, name = "Biome") +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +   # room for the labels
-  labs(x = "Distance to treeline (km)", y = "Plant height (m, log scale)", title = title_ph) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +   # room for the labels
+  labs(x = "Distance to Biome Boundary (km)", y = "Plant Height (m, log scale)", title = title_seg_ph) +
   theme_rq3 +
   theme(legend.position = "none") +
   guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))))
 
-# Save figure to file
-ggsave(here("figures", "Figure4a_PlantHeight_treeline.png"), 
-       plot = plot_ph, width = 10, height = 6, dpi = 600)
 
-## 4.5. Robustness check: separate models for each side --------------------------
-# The slopes in step .2 come from ONE model in which the boreal and tundra lines
-# meet at the treeline and share the random effects. Here each side is
-# analysed on its own, without those assumptions. If the slopes are similar,
-# the reported slopes do not depend on the lines meeting at the treeline.
-# Note: these models do NOT test whether the two slopes differ; that is the
-# test in step .2.
+# Save figure to file 
+ggsave(here("figures", "Figure4a_PlantHeight_segmented.png"),
+       plot = plot_seg_ph, width = 10, height = 6, dpi = 600)
 
-# Extract the boreal and tundra sides
-boreal_side_ph <- plant_height_data |> filter(distance_to_boundary_km < 0)
-tundra_side_ph <- plant_height_data |> filter(distance_to_boundary_km >= 0)
-
-# Test the boreal side & get coefficients
-model_boreal_side_ph <- lmerTest::lmer(side_formula, data = boreal_side_ph, REML = TRUE)
-coef_boreal_side_ph <- summary(model_boreal_side_ph)$coefficients["distance_to_boundary_km", ]
-
-# Test the tundra side & get coefficients
-model_tundra_side_ph <- lmerTest::lmer(side_formula, data = tundra_side_ph, REML = TRUE)
-coef_tundra_side_ph <- summary(model_tundra_side_ph)$coefficients["distance_to_boundary_km", ]
-
-# Slopes from the one model (step .2) next to the separate models, as % per km
-print(data.frame(Side = c("Boreal side", "Tundra side"),
-                 one_model_pct_per_km = 100 * (exp(coefs_treeline_ph[c("below", "above"), "Estimate"]) - 1),
-                 one_model_p = coefs_treeline_ph[c("below", "above"), "Pr(>|t|)"],
-                 separate_pct_per_km = 100 * (exp(c(coef_boreal_side_ph[["Estimate"]],
-                                     coef_tundra_side_ph[["Estimate"]])) - 1),
-                 separate_p = c(coef_boreal_side_ph[["Pr(>|t|)"]], coef_tundra_side_ph[["Pr(>|t|)"]]),
-                 row.names = NULL
-), digits = 3)
-
-## 4.6. Collect results ------------------------------------------------------------
-
-# One row with everything for this trait; combined across traits in section 8
-
-results_ph <- data.frame(Trait = "PlantHeight",
-                         n_records = nrow(plant_height_data),
-                         n_species = n_distinct(plant_height_data$StandardSpeciesName),
-                         n_sites = n_distinct(plant_height_data$site_name),
-                         n_locations_boreal = n_locations_boreal_ph,
-                         n_locations_tundra = n_locations_tundra_ph,
-                         # Question 1: breakpoint at the treeline, and the slopes on each side
-                         LR_treeline = lr_treeline_ph,
-                         p_treeline = p_treeline_ph,
-                         dAIC_treeline = daic_treeline_ph,
-                         slope_boreal = coefs_treeline_ph["below", "Estimate"],
-                         SE_boreal = coefs_treeline_ph["below", "Std. Error"],
-                         df_boreal = coefs_treeline_ph["below", "df"],
-                         p_boreal = coefs_treeline_ph["below", "Pr(>|t|)"],
-                         slope_tundra = coefs_treeline_ph["above", "Estimate"],
-                         SE_tundra = coefs_treeline_ph["above", "Std. Error"],
-                         df_tundra = coefs_treeline_ph["above", "df"],
-                         p_tundra = coefs_treeline_ph["above", "Pr(>|t|)"],
-                         # Robustness check: separate models per side
-                         sep_n_locations_boreal = n_distinct(boreal_side_ph$location),
-                         sep_slope_boreal = coef_boreal_side_ph[["Estimate"]],
-                         sep_SE_boreal = coef_boreal_side_ph[["Std. Error"]],
-                         sep_df_boreal = coef_boreal_side_ph[["df"]],
-                         sep_p_boreal = coef_boreal_side_ph[["Pr(>|t|)"]],
-                         sep_n_locations_tundra = n_distinct(tundra_side_ph$location),
-                         sep_slope_tundra = coef_tundra_side_ph[["Estimate"]],
-                         sep_SE_tundra = coef_tundra_side_ph[["Std. Error"]],
-                         sep_df_tundra = coef_tundra_side_ph[["df"]],
-                         sep_p_tundra = coef_tundra_side_ph[["Pr(>|t|)"]],
-                         # Question 2: best breakpoint anywhere along the gradient
-                         best_breakpoint_km = breakpoint_ph,
-                         best_breakpoint_lower95_km = breakpoint_lower_ph,
-                         best_breakpoint_upper95_km = breakpoint_upper_ph,
-                         ci_at_search_edge = ci_at_edge_ph,
-                         second_dip = second_dip_ph,
-                         dAIC_best_vs_linear = daic_best_vs_linear_ph,
-                         deviance_treeline_vs_best = deviance_treeline_vs_best_ph)
+# Collect the results of the segmented regression into single df to save later
+results_seg_ph <- data.frame(Trait = "PlantHeight",
+                             n_records = nrow(plant_height_data),
+                             n_species = n_distinct(plant_height_data$StandardSpeciesName),
+                             n_sites = n_distinct(plant_height_data$site_name),
+                             n_locations = n_distinct(plant_height_data$location),
+                             breakpoint_km = breakpoint_ph,
+                             breakpoint_lower = breakpoint_lower_ph,
+                             breakpoint_upper = breakpoint_upper_ph,
+                             ci_includes_treeline = breakpoint_lower_ph <= 0 & breakpoint_upper_ph >= 0,
+                             davies_p = davies_ph$p.value,
+                             dAIC_vs_straight_line = daic_seg_ph,
+                             slope_before = slopes_ph[1, 1],
+                             slope_before_lower = slopes_ph[1, 4],
+                             slope_before_upper = slopes_ph[1, 5],
+                             slope_after = slopes_ph[2, 1],
+                             slope_after_lower = slopes_ph[2, 4],
+                             slope_after_upper = slopes_ph[2, 5],
+                             n_sites_autocorrelation = nrow(sites_ph),
+                             morans_I = moran_seg_ph$observed,
+                             morans_I_p = moran_seg_ph$p.value)
 
 # 5. SLA ------------------------------------------------------------
 
 ## 5.1. Prepare the data -------------------------------------------------------
 
-# Records of this trait with a positive standardised value (log() needs > 0)
+# Keep only records that can be logged (> 0)
 sla_data <- cleaned_traits_final |>
   filter(TraitNameNew == "SLA", !is.na(StdValue), StdValue > 0)
 
-# Outliers: values more than 5 SD from their biome's mean, calculated on the
-# LOG scale (the scale used in the models). On the original scale, e.g. tall
-# trees look extreme next to many small plants and would be wrongly removed.
+# Outliers per biome: values more than 5 SD from the biome mean on the LOG
+# scale (the scale used in the models).
 # SLA: the lower bound is at least 0.1 mm2/mg, because values below this are
-# implausible for vascular plants.
+# implausible for vascular plants
 sla_data <- sla_data |>
   group_by(biome) |>
   mutate(lower_bound = pmax(0.1, exp(mean(log(StdValue)) - 5 * sd(log(StdValue)))),
          upper_bound = exp(mean(log(StdValue)) + 5 * sd(log(StdValue)))) |>
   ungroup()
 
+# Check how many outliers are removed
 cat("SLA outliers removed:", sum(sla_data$StdValue < sla_data$lower_bound |
-                                   sla_data$StdValue > sla_data$upper_bound), "\n")
+                                   sla_data$StdValue > sla_data$upper_bound), "\n") #6
 
-# Remove the outliers and log-transform the trait
+# Remove the outliers, log-transform the trait, and make the grouping
+# variables factors (needed for the random effects in the GAM script)
 sla_data <- sla_data |>
   filter(StdValue >= lower_bound, StdValue <= upper_bound) |>
   dplyr::select(-lower_bound, -upper_bound) |>
-  mutate(log_trait = log(StdValue))
+  mutate(log_trait = log(StdValue),
+         species_f = factor(StandardSpeciesName),
+         location_f = factor(location),
+         site_f = factor(site_name))
 
-# How much data there is on each side of the treeline
+# Check how much data there is on each side of the treeline
 print(sla_data |>
         group_by(biome) |>
         summarise(n_records = n(),
@@ -614,1108 +539,772 @@ print(sla_data |>
                   n_sites = n_distinct(site_name),
                   n_locations = n_distinct(location)))
 
-# Number of independent locations on each side (reported in the results table)
-n_locations_boreal_sla <- n_distinct(sla_data$location[sla_data$distance_to_boundary_km < 0])
-n_locations_tundra_sla <- n_distinct(sla_data$location[sla_data$distance_to_boundary_km >= 0])
+# biome  n_records n_species n_sites n_locations
+# <chr>      <int>     <int>   <int>       <int>
+# 1 boreal      2769       146      55          38
+# 2 tundra     15248       295     133          67
 
-## 5.2. Question 1: is there a breakpoint at the treeline (0 km)? --------------
-# Two models are compared:
-#   - one straight line along the whole gradient (no breakpoint)
-#   - a line that can change slope at the treeline (breakpoint at 0 km)
-# Both are fitted with maximum likelihood (REML = FALSE), which is needed to
-# compare models with different fixed effects. Because the breakpoint location
-# (0 km) is fixed in advance, the likelihood ratio test with 1 df is valid.
+## 5.2. Segmented regression without random effects ----------------------------
 
-# Add the breakpoint variables for a breakpoint at 0 km
-data_treeline_sla <- sla_data |>
-  mutate(below = pmin(distance_to_boundary_km, 0),    # boreal side
-         above = pmax(distance_to_boundary_km, 0))    # tundra side
+# Fit the lm
+lm_sla <- lm(lm_formula, data = sla_data)
 
-model_linear_sla <- lmerTest::lmer(linear_formula, data = data_treeline_sla, REML = FALSE)
-model_treeline_ml_sla <- lmerTest::lmer(breakpoint_formula, data = data_treeline_sla,
-                                        REML = FALSE)
+# Fit the breakpoint model
+seg_sla <- segmented(lm_sla, seg.Z = ~ distance_to_boundary_km, psi = seg_start_psi,
+                     control = seg.control(n.boot = seg_restarts))
 
-# Likelihood ratio test: does the breakpoint model fit significantly better?
-lr_treeline_sla <- 2 * (as.numeric(logLik(model_treeline_ml_sla)) -
-                          as.numeric(logLik(model_linear_sla)))
-p_treeline_sla <- pchisq(lr_treeline_sla, df = 1, lower.tail = FALSE)
+# Quick check of the segmented regression summary
+print(summary(seg_sla))
+# Call: 
+#   segmented.lm(obj = lm_sla, seg.Z = ~distance_to_boundary_km, 
+#                psi = seg_start_psi, control = seg.control(n.boot = seg_restarts))
+# 
+# Estimated Break-Point(s):
+#   Est. St.Err
+# psi1.distance_to_boundary_km 67.696 16.976
+# 
+# Coefficients of the linear terms:
+#   Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)                 2.525e+00  5.717e-03  441.71   <2e-16 ***
+#   distance_to_boundary_km     4.987e-04  2.500e-05   19.94   <2e-16 ***
+#   U1.distance_to_boundary_km -7.643e-04  3.084e-05  -24.79       NA    
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 0.6014 on 18013 degrees of freedom
+# Multiple R-Squared: 0.03406,  Adjusted R-squared: 0.0339 
+# 
+# Boot restarting based on 11 samples. Last fit:
+#   Convergence attained in 1 iterations (rel. change 3.5167e-06)
 
-# Delta AIC: positive = the breakpoint model fits better (~2 = weak, >4 = clearer support)
-daic_treeline_sla <- AIC(model_linear_sla) - AIC(model_treeline_ml_sla)
+# Davies test: is there a change in slope anywhere along the gradient?
+# (tests the straight line against a breakpoint model, allowing for the fact
+# that the breakpoint location is estimated)
+davies_sla <- davies.test(lm_sla, seg.Z = ~ distance_to_boundary_km)
+print(davies_sla)
+# data:  formula = log_trait ~ distance_to_boundary_km ,   method = lm 
+# model = gaussian , link = identity  
+# segmented variable = distance_to_boundary_km
+# 'best' at = 225.19, n.points = 8, p-value < 2.2e-16
+# alternative hypothesis: two.sided
 
-cat("\nQUESTION 1 - breakpoint at the treeline: LR =", round(lr_treeline_sla, 2),
-    ", p =", signif(p_treeline_sla, 3),
-    ", delta AIC =", round(daic_treeline_sla, 2),
-    "(positive = breakpoint model fits better)\n")
+# Breakpoint and its 95% CI (first column = estimate, then lower and upper limit)
+breakpoint_ci_sla <- confint(seg_sla)
+breakpoint_sla <- breakpoint_ci_sla[1, 1]
+breakpoint_lower_sla <- breakpoint_ci_sla[1, 2]
+breakpoint_upper_sla <- breakpoint_ci_sla[1, 3]
 
-# Slopes on each side of the treeline: the same breakpoint model refitted with
-# REML, which gives better estimates of the random effects for reporting.
-# 'below' = boreal-side slope, 'above' = tundra-side slope (per km)
-model_treeline_sla <- lmerTest::lmer(breakpoint_formula, data = data_treeline_sla,
-                                     REML = TRUE)
-print(summary(model_treeline_sla))
-coefs_treeline_sla <- summary(model_treeline_sla)$coefficients
+# Slopes before (row 1) and after (row 2) the breakpoint, with 95% CIs
+# (columns: estimate, SE, t value, lower and upper CI limit)
+slopes_sla <- slope(seg_sla)$distance_to_boundary_km
+print(slopes_sla)
+# Est.    St.Err. t value   CI(95%).l   CI(95%).u
+# slope1  0.00049867 2.5005e-05  19.943  0.00044965  0.00054768
+# slope2 -0.00026562 1.8046e-05 -14.719 -0.00030099 -0.00023025
 
-# Model diagnostics: residuals vs fitted values (should show no pattern) and
-# a Q-Q plot (points should lie close to the line)
-residuals_sla <- residuals(model_treeline_sla, type = "pearson")
-png(here("figures", "RQ3_SLA_model_diagnostics.png"),
-    width = 10, height = 5, units = "in", res = 300)
+# Delta AIC: positive = the breakpoint model fits better than the straight line
+daic_seg_sla <- AIC(lm_sla) - AIC(seg_sla)
+
+cat("\nSLA - breakpoint:", round(breakpoint_sla), "km (95% CI",
+    round(breakpoint_lower_sla), "to", round(breakpoint_upper_sla), "km)",
+    ifelse(breakpoint_lower_sla <= 0 & breakpoint_upper_sla >= 0,
+           "- CI includes the treeline", "- CI does not include the treeline"), "\n",
+    "  Davies test p =", signif(davies_sla$p.value, 3),
+    "| delta AIC vs straight line =", round(daic_seg_sla, 1), "\n")
+# SLA - breakpoint: 68 km (95% CI 34 to 101 km) - CI does not include the treeline 
+# Davies test p = 3.71e-130 | delta AIC vs straight line = 610.4
+
+## 5.3. Spatial autocorrelation of the residuals --------------------------------
+
+# Extract residuals
+sla_data$resid_seg <- residuals(seg_sla)
+
+# Get mean residual per site, with the site's projected coordinates
+sites_sla <- sla_data |>
+  group_by(site_name) |>
+  summarise(x_km = first(x_km),
+            y_km = first(y_km),
+            resid_seg = mean(resid_seg),
+            n_records = n(),
+            .groups = "drop")
+
+# Distances between all pairs of sites (km)
+site_dist_sla <- as.matrix(dist(cbind(sites_sla$x_km, sites_sla$y_km)))
+
+# Moran's I over all sites (inverse-distance weights)
+weights_sla <- 1 / site_dist_sla
+weights_sla[!is.finite(weights_sla)] <- 0   # a site's distance to itself
+moran_seg_sla <- Moran.I(sites_sla$resid_seg, weights_sla)
+
+cat("\nSLA - Moran's I of the segmented residuals (", nrow(sites_sla), " sites): I =",
+    round(moran_seg_sla$observed, 3), ", p =", signif(moran_seg_sla$p.value, 3), "\n") 
+# SLA - Moran's I of the segmented residuals ( 188  sites): I = 0.276 , p = 3.32e-11
+
+# Correlogram: Moran's I among pairs of sites within each distance class
+correlogram_sla <- data.frame()
+for (i in seq_len(length(correlogram_breaks) - 1)) {
+  
+  # Weight 1 for pairs of sites within this distance class, 0 otherwise
+  class_weights <- (site_dist_sla > correlogram_breaks[i] &
+                      site_dist_sla <= correlogram_breaks[i + 1]) * 1
+  
+  # Skip classes without any pairs of sites
+  if (sum(class_weights) == 0) next
+  
+  moran_class <- Moran.I(sites_sla$resid_seg, class_weights)
+  
+  correlogram_sla <- bind_rows(correlogram_sla, data.frame(
+    Trait = "SLA",
+    distance_km = (correlogram_breaks[i] + correlogram_breaks[i + 1]) / 2,
+    n_pairs = sum(class_weights) / 2,
+    Model = segmented_label,
+    morans_I = moran_class$observed,
+    p = moran_class$p.value))
+}
+
+## 5.4. Model validation ---------------------------------------------------------
+
+# Residuals vs fitted values (no pattern and an even spread around 0) and a
+# Q-Q plot (points close to the line = roughly normal residuals)
+png(here("figures", "RQ3_SLA_validation_segmented.png"),
+    width = 12, height = 5, units = "in", res = 200)
 par(mfrow = c(1, 2))
-plot(fitted(model_treeline_sla), residuals_sla,
-     xlab = "Fitted values", ylab = "Pearson residuals", main = "SLA")
+
+plot(fitted(seg_sla), sla_data$resid_seg, pch = 16, cex = 0.4, col = rgb(0, 0, 0, 0.2),
+     xlab = "Fitted values", ylab = "Residuals",
+     main = "SLA - Segmented: residuals vs fitted")
 abline(h = 0, col = "red", lty = 2)
-qqnorm(residuals_sla, main = "SLA - Q-Q Plot")
-qqline(residuals_sla, col = "red")
+
+qqnorm(sla_data$resid_seg, pch = 16, cex = 0.4, main = "SLA - Segmented: Q-Q plot")
+qqline(sla_data$resid_seg, col = "red")
+
 par(mfrow = c(1, 1))
 dev.off()
 
-## 5.3. Question 2: is there a breakpoint somewhere else? ----------------------
-# The breakpoint model is fitted with the breakpoint placed at many candidate
-# locations along the gradient ("profile likelihood"). The best-fitting
-# candidate is then compared with
-#   (a) no breakpoint (delta AIC), and
-#   (b) a breakpoint at the treeline (deviance difference).
-# Candidates that fit almost as well as the best one (deviance difference
-# <= 3.84) form the 95% confidence interval (CI) of the breakpoint location.
-# Only trust the location if the profile has one clear dip and the CI does not
-# reach the edge of the search range (warnings are printed if not).
+## 5.5. Figure -------------------------------------------------------------------
 
-# Range of candidates: the central 90% of the data
-search_range_sla <- quantile(sla_data$distance_to_boundary_km, c(profile_trim, 1 - profile_trim))
+# Combine everything into a single df
+seg_line_sla <- data.frame(distance_to_boundary_km = seq(min(sla_data$distance_to_boundary_km),
+                                                         max(sla_data$distance_to_boundary_km),
+                                                         length.out = 300))
+seg_line_sla$predicted <- predict(seg_sla, newdata = seg_line_sla)
 
-# Step 1: coarse grid of candidates; fit the breakpoint model at each one and
-# store how well it fits (log-likelihood)
-coarse_psi_sla <- seq(ceiling(search_range_sla[1]), floor(search_range_sla[2]),
-                      by = coarse_step_km)
-coarse_loglik_sla <- numeric(length(coarse_psi_sla))
-cat("Fitting", length(coarse_psi_sla), "coarse candidate breakpoints...\n")
+# Slope labels as % change per km
+label_before_sla <- paste0("Before breakpoint: ",
+                           sprintf("%+.3f", 100 * (exp(slopes_sla[1, 1]) - 1)), "% per km")
+label_after_sla <- paste0("After breakpoint: ",
+                          sprintf("%+.3f", 100 * (exp(slopes_sla[2, 1]) - 1)), "% per km")
+title_seg_sla <- paste0("Breakpoint: ", round(breakpoint_sla), " km (95% CI ",
+                        round(breakpoint_lower_sla), " to ", round(breakpoint_upper_sla),
+                        "); Davies p ", ifelse(davies_sla$p.value < 0.001, "< 0.001",
+                                               paste0("= ", sprintf("%.3f", davies_sla$p.value))),
+                        ", \u0394AIC = ", sprintf("%.1f", daic_seg_sla))
 
-for (i in seq_along(coarse_psi_sla)) {
-  candidate_data <- sla_data |>
-    mutate(below = pmin(distance_to_boundary_km - coarse_psi_sla[i], 0),
-           above = pmax(distance_to_boundary_km - coarse_psi_sla[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  coarse_loglik_sla[i] <- as.numeric(logLik(candidate_model))
-}
-
-# Step 2: finer grid of candidates around the best coarse candidate
-best_coarse_sla <- coarse_psi_sla[which.max(coarse_loglik_sla)]
-fine_psi_sla <- seq(max(ceiling(search_range_sla[1]), best_coarse_sla - fine_window_km),
-                    min(floor(search_range_sla[2]), best_coarse_sla + fine_window_km),
-                    by = fine_step_km)
-fine_psi_sla <- setdiff(fine_psi_sla, coarse_psi_sla)   # skip candidates already fitted
-fine_loglik_sla <- numeric(length(fine_psi_sla))
-cat("Fitting", length(fine_psi_sla), "fine candidate breakpoints...\n")
-
-for (i in seq_along(fine_psi_sla)) {
-  candidate_data <- sla_data |>
-    mutate(below = pmin(distance_to_boundary_km - fine_psi_sla[i], 0),
-           above = pmax(distance_to_boundary_km - fine_psi_sla[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  fine_loglik_sla[i] <- as.numeric(logLik(candidate_model))
-}
-
-# All candidates, sorted by distance. delta_deviance = how much worse each
-# candidate fits than the best one (0 = the best candidate)
-profile_sla <- data.frame(psi_km = c(coarse_psi_sla, fine_psi_sla),
-                          logLik = c(coarse_loglik_sla, fine_loglik_sla)) |>
-  arrange(psi_km) |>
-  mutate(delta_deviance = 2 * (max(logLik) - logLik))
-
-# Best breakpoint
-best_index_sla <- which.max(profile_sla$logLik)
-breakpoint_sla <- profile_sla$psi_km[best_index_sla]
-
-# 95% CI: starting at the best candidate, move outwards in both directions for
-# as long as the candidates fit almost as well (delta_deviance <= 3.84)
-ci_threshold <- qchisq(0.95, df = 1)
-
-lower_index_sla <- best_index_sla
-while (lower_index_sla > 1 &&
-       profile_sla$delta_deviance[lower_index_sla - 1] <= ci_threshold) {
-  lower_index_sla <- lower_index_sla - 1
-}
-
-upper_index_sla <- best_index_sla
-while (upper_index_sla < nrow(profile_sla) &&
-       profile_sla$delta_deviance[upper_index_sla + 1] <= ci_threshold) {
-  upper_index_sla <- upper_index_sla + 1
-}
-
-breakpoint_lower_sla <- profile_sla$psi_km[lower_index_sla]
-breakpoint_upper_sla <- profile_sla$psi_km[upper_index_sla]
-
-# Warning signs that the location cannot be trusted:
-#   - the CI reaches the first or last candidate (the edge of the search range)
-#   - a second, separate group of candidates also fits almost as well
-ci_at_edge_sla <- lower_index_sla == 1 | upper_index_sla == nrow(profile_sla)
-second_dip_sla <- any(profile_sla$delta_deviance <= ci_threshold &
-                        (seq_len(nrow(profile_sla)) < lower_index_sla |
-                           seq_len(nrow(profile_sla)) > upper_index_sla))
-
-# (a) Best breakpoint vs no breakpoint: delta AIC, counting the breakpoint
-#     location as an extra estimated parameter (positive = breakpoint better)
-daic_best_vs_linear_sla <- 2 * (max(profile_sla$logLik) -
-                                  as.numeric(logLik(model_linear_sla))) - 2 * 2
-
-# (b) Best breakpoint vs breakpoint at the treeline: deviance difference
-#     (below 3.84 = the treeline fits about as well as the best location)
-deviance_treeline_vs_best_sla <- 2 * (max(profile_sla$logLik) -
-                                        as.numeric(logLik(model_treeline_ml_sla)))
-
-cat("\nQUESTION 2 - best breakpoint:", breakpoint_sla, "km (95% CI",
-    breakpoint_lower_sla, "to", breakpoint_upper_sla, "km)\n",
-    "  delta AIC vs no breakpoint:", round(daic_best_vs_linear_sla, 2), "\n",
-    "  treeline vs best location, deviance difference:",
-    round(deviance_treeline_vs_best_sla, 2),
-    ifelse(deviance_treeline_vs_best_sla <= ci_threshold,
-           "(treeline fits about as well)", "(treeline fits significantly worse)"), "\n",
-    ifelse(ci_at_edge_sla, "  WARNING: CI reaches the edge of the search range\n", ""),
-    ifelse(second_dip_sla, "  WARNING: second dip in the profile\n", ""))
-
-# Supplementary figure: how well each candidate fits. Candidates below the red
-# line lie within the 95% CI; the solid line marks the best candidate and the
-# dashed grey line the treeline.
-plot_profile_sla <- ggplot(profile_sla, aes(x = psi_km, y = delta_deviance)) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 1) +
-  geom_hline(yintercept = ci_threshold, linetype = "dashed", colour = "red") +
-  geom_vline(xintercept = breakpoint_sla, colour = "black") +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
-  labs(x = "Candidate breakpoint (km from the treeline)",
-       y = "Deviance relative to best breakpoint",
-       title = "SLA: points below the red line lie within the 95% CI") +
-  theme_rq3
-
-ggsave(here("figures", "FigureS_RQ3_SLA_breakpoint_profile.png"),
-       plot = plot_profile_sla, width = 9, height = 6, dpi = 300)
-
-## 5.4. Figure -------------------------------------------------------------------
-# All records (log scale) against distance to the treeline, with the fitted
-# line from the breakpoint model at the treeline (step .2). The title gives the
-# result of Question 1; the labels give the slope on each side.
-
-# Slope labels, converted from log-scale slopes to % change per km
-label_boreal_sla <- paste0("Boreal side: ",
-                           sprintf("%+.2f", 100 * (exp(coefs_treeline_sla["below", "Estimate"]) - 1)),
-                           "% per km\np = ",
-                           sprintf("%.3f", coefs_treeline_sla["below", "Pr(>|t|)"]))
-label_tundra_sla <- paste0("Tundra side: ",
-                           sprintf("%+.2f", 100 * (exp(coefs_treeline_sla["above", "Estimate"]) - 1)),
-                           "% per km\np = ",
-                           sprintf("%.3f", coefs_treeline_sla["above", "Pr(>|t|)"]))
-
-# Title: result of the test for a breakpoint at the treeline
-title_sla <- paste0("Breakpoint at the treeline: LR = ", sprintf("%.2f", lr_treeline_sla),
-                    ", p = ", sprintf("%.3f", p_treeline_sla),
-                    ", \u0394AIC = ", sprintf("%.1f", daic_treeline_sla))
-
-# Fitted line for an average species, location and site (random effects left
-# out with re.form = NA)
-line_sla <- data.frame(distance_to_boundary_km = seq(min(sla_data$distance_to_boundary_km),
-                                                     max(sla_data$distance_to_boundary_km),
-                                                     length.out = 200)) |>
-  mutate(below = pmin(distance_to_boundary_km, 0),
-         above = pmax(distance_to_boundary_km, 0))
-line_sla$predicted <- predict(model_treeline_sla, newdata = line_sla, re.form = NA)
-
-plot_sla <- ggplot() +
+# Plot figure
+(plot_seg_sla <- ggplot() +
+  annotate("rect", xmin = breakpoint_lower_sla, xmax = breakpoint_upper_sla,
+           ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.3) +
   geom_point(data = sla_data, aes(x = distance_to_boundary_km, y = log_trait, colour = biome),
              alpha = 0.2, size = 1) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "gray30", linewidth = 0.7) +
-  geom_line(data = line_sla, aes(x = distance_to_boundary_km, y = predicted),
+  geom_vline(xintercept = breakpoint_sla, colour = "black", linewidth = 0.7) +
+  geom_line(data = seg_line_sla, aes(x = distance_to_boundary_km, y = predicted),
             colour = fit_line_colour, linewidth = 1.5) +
-  annotate("text", x = -Inf, y = Inf, label = label_boreal_sla,
+  annotate("text", x = -Inf, y = Inf, label = label_before_sla,
            hjust = -0.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
-  annotate("text", x = Inf, y = Inf, label = label_tundra_sla,
+  annotate("text", x = Inf, y = Inf, label = label_after_sla,
            hjust = 1.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
   scale_colour_manual(values = biome_colours, labels = biome_labels, name = "Biome") +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +   # room for the labels
-  labs(x = "Distance to treeline (km)", y = expression(bold(paste("SLA (mm"^2, " mg"^-1, ", log scale)"))), title = title_sla) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +   # room for the labels
+  labs(x = "Distance to Biome Boundary (km)", y = expression(bold(paste("SLA (mm"^2, " mg"^-1, ", log scale)"))), title = title_seg_sla) +
   theme_rq3 +
   theme(legend.position = "none") +
-  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))))
 
-print(plot_sla)
-ggsave(here("figures", "Figure4b_SLA_treeline.png"), plot = plot_sla, width = 10, height = 6, dpi = 600)
+# Save figure to file
+ggsave(here("figures", "Figure4b_SLA_segmented.png"),
+       plot = plot_seg_sla, width = 10, height = 6, dpi = 600)
 
-## 5.5. Robustness check: separate models for each side --------------------------
-# The slopes in step .2 come from ONE model in which the boreal and tundra lines
-# meet at the treeline and share the random effects. Here each side is
-# analysed on its own, without those assumptions. If the slopes are similar,
-# the reported slopes do not depend on the lines meeting at the treeline.
-# Note: these models do NOT test whether the two slopes differ; that is the
-# test in step .2.
-
-boreal_side_sla <- sla_data |> filter(distance_to_boundary_km < 0)
-tundra_side_sla <- sla_data |> filter(distance_to_boundary_km >= 0)
-
-model_boreal_side_sla <- lmerTest::lmer(side_formula, data = boreal_side_sla, REML = TRUE)
-coef_boreal_side_sla <- summary(model_boreal_side_sla)$coefficients["distance_to_boundary_km", ]
-
-model_tundra_side_sla <- lmerTest::lmer(side_formula, data = tundra_side_sla, REML = TRUE)
-coef_tundra_side_sla <- summary(model_tundra_side_sla)$coefficients["distance_to_boundary_km", ]
-
-# Slopes from the one model (step .2) next to the separate models, as % per km
-print(data.frame(
-  Side = c("Boreal side", "Tundra side"),
-  one_model_pct_per_km = 100 * (exp(coefs_treeline_sla[c("below", "above"), "Estimate"]) - 1),
-  one_model_p = coefs_treeline_sla[c("below", "above"), "Pr(>|t|)"],
-  separate_pct_per_km = 100 * (exp(c(coef_boreal_side_sla[["Estimate"]],
-                                     coef_tundra_side_sla[["Estimate"]])) - 1),
-  separate_p = c(coef_boreal_side_sla[["Pr(>|t|)"]], coef_tundra_side_sla[["Pr(>|t|)"]]),
-  row.names = NULL
-), digits = 3)
-
-## 5.6. Collect the results ---------------------------------------------------------
-# One row with everything for this trait; combined across traits in section 8
-
-results_sla <- data.frame(
-  Trait = "SLA",
-  n_records = nrow(sla_data),
-  n_species = n_distinct(sla_data$StandardSpeciesName),
-  n_sites = n_distinct(sla_data$site_name),
-  n_locations_boreal = n_locations_boreal_sla,
-  n_locations_tundra = n_locations_tundra_sla,
-  # Question 1: breakpoint at the treeline, and the slopes on each side
-  LR_treeline = lr_treeline_sla,
-  p_treeline = p_treeline_sla,
-  dAIC_treeline = daic_treeline_sla,
-  slope_boreal = coefs_treeline_sla["below", "Estimate"],
-  SE_boreal = coefs_treeline_sla["below", "Std. Error"],
-  df_boreal = coefs_treeline_sla["below", "df"],
-  p_boreal = coefs_treeline_sla["below", "Pr(>|t|)"],
-  slope_tundra = coefs_treeline_sla["above", "Estimate"],
-  SE_tundra = coefs_treeline_sla["above", "Std. Error"],
-  df_tundra = coefs_treeline_sla["above", "df"],
-  p_tundra = coefs_treeline_sla["above", "Pr(>|t|)"],
-  # Robustness check: separate models per side
-  sep_n_locations_boreal = n_distinct(boreal_side_sla$location),
-  sep_slope_boreal = coef_boreal_side_sla[["Estimate"]],
-  sep_SE_boreal = coef_boreal_side_sla[["Std. Error"]],
-  sep_df_boreal = coef_boreal_side_sla[["df"]],
-  sep_p_boreal = coef_boreal_side_sla[["Pr(>|t|)"]],
-  sep_n_locations_tundra = n_distinct(tundra_side_sla$location),
-  sep_slope_tundra = coef_tundra_side_sla[["Estimate"]],
-  sep_SE_tundra = coef_tundra_side_sla[["Std. Error"]],
-  sep_df_tundra = coef_tundra_side_sla[["df"]],
-  sep_p_tundra = coef_tundra_side_sla[["Pr(>|t|)"]],
-  # Question 2: best breakpoint anywhere along the gradient
-  best_breakpoint_km = breakpoint_sla,
-  best_breakpoint_lower95_km = breakpoint_lower_sla,
-  best_breakpoint_upper95_km = breakpoint_upper_sla,
-  ci_at_search_edge = ci_at_edge_sla,
-  second_dip = second_dip_sla,
-  dAIC_best_vs_linear = daic_best_vs_linear_sla,
-  deviance_treeline_vs_best = deviance_treeline_vs_best_sla
-)
+# Collect results into signle df
+results_seg_sla <- data.frame(Trait = "SLA",
+                              n_records = nrow(sla_data),
+                              n_species = n_distinct(sla_data$StandardSpeciesName),
+                              n_sites = n_distinct(sla_data$site_name),
+                              n_locations = n_distinct(sla_data$location),
+                              breakpoint_km = breakpoint_sla,
+                              breakpoint_lower = breakpoint_lower_sla,
+                              breakpoint_upper = breakpoint_upper_sla,
+                              ci_includes_treeline = breakpoint_lower_sla <= 0 & breakpoint_upper_sla >= 0,
+                              davies_p = davies_sla$p.value,
+                              dAIC_vs_straight_line = daic_seg_sla,
+                              slope_before = slopes_sla[1, 1],
+                              slope_before_lower = slopes_sla[1, 4],
+                              slope_before_upper = slopes_sla[1, 5],
+                              slope_after = slopes_sla[2, 1],
+                              slope_after_lower = slopes_sla[2, 4],
+                              slope_after_upper = slopes_sla[2, 5],
+                              n_sites_autocorrelation = nrow(sites_sla),
+                              morans_I = moran_seg_sla$observed,
+                              morans_I_p = moran_seg_sla$p.value)
 
 # 6. LEAF N ------------------------------------------------------------
 
 ## 6.1. Prepare the data -------------------------------------------------------
 
-# Records of this trait with a positive standardised value (log() needs > 0)
+# Keep only records that can be logged (> 0)
 leafn_data <- cleaned_traits_final |>
   filter(TraitNameNew == "LeafN", !is.na(StdValue), StdValue > 0)
 
-# Outliers: values more than 5 SD from their biome's mean, calculated on the
-# LOG scale (the scale used in the models). On the original scale, e.g. tall
-# trees look extreme next to many small plants and would be wrongly removed.
+# Outliers per biome: values more than 5 SD from the biome mean on the LOG
+# scale (the scale used in the models)
 leafn_data <- leafn_data |>
   group_by(biome) |>
   mutate(lower_bound = exp(mean(log(StdValue)) - 5 * sd(log(StdValue))),
          upper_bound = exp(mean(log(StdValue)) + 5 * sd(log(StdValue)))) |>
   ungroup()
 
+# Check how many outliers are removed
 cat("Leaf N outliers removed:", sum(leafn_data$StdValue < leafn_data$lower_bound |
-                                      leafn_data$StdValue > leafn_data$upper_bound), "\n")
+                                      leafn_data$StdValue > leafn_data$upper_bound), "\n") #12
 
-# Remove the outliers and log-transform the trait
+# Remove the outliers
 leafn_data <- leafn_data |>
   filter(StdValue >= lower_bound, StdValue <= upper_bound) |>
   dplyr::select(-lower_bound, -upper_bound) |>
-  mutate(log_trait = log(StdValue))
+  mutate(log_trait = log(StdValue),
+         species_f = factor(StandardSpeciesName),
+         location_f = factor(location),
+         site_f = factor(site_name))
 
-# How much data there is on each side of the treeline
+# Check how much data there is on each side of the treeline
 print(leafn_data |>
         group_by(biome) |>
         summarise(n_records = n(),
                   n_species = n_distinct(StandardSpeciesName),
                   n_sites = n_distinct(site_name),
                   n_locations = n_distinct(location)))
+# biome  n_records n_species n_sites n_locations
+# <chr>      <int>     <int>   <int>       <int>
+# 1 boreal      1766       252     113          99
+# 2 tundra      5441       240      97          60
 
-# Number of independent locations on each side (reported in the results table)
-n_locations_boreal_leafn <- n_distinct(leafn_data$location[leafn_data$distance_to_boundary_km < 0])
-n_locations_tundra_leafn <- n_distinct(leafn_data$location[leafn_data$distance_to_boundary_km >= 0])
+## 6.2. Segmented regression without random effects ----------------------------
 
-## 6.2. Question 1: is there a breakpoint at the treeline (0 km)? --------------
-# Two models are compared:
-#   - one straight line along the whole gradient (no breakpoint)
-#   - a line that can change slope at the treeline (breakpoint at 0 km)
-# Both are fitted with maximum likelihood (REML = FALSE), which is needed to
-# compare models with different fixed effects. Because the breakpoint location
-# (0 km) is fixed in advance, the likelihood ratio test with 1 df is valid.
+# Straight line
+lm_leafn <- lm(lm_formula, data = leafn_data)
 
-# Add the breakpoint variables for a breakpoint at 0 km
-data_treeline_leafn <- leafn_data |>
-  mutate(below = pmin(distance_to_boundary_km, 0),    # boreal side
-         above = pmax(distance_to_boundary_km, 0))    # tundra side
+# Breakpoint model
+seg_leafn <- segmented(lm_leafn, seg.Z = ~ distance_to_boundary_km, psi = seg_start_psi,
+                       control = seg.control(n.boot = seg_restarts))
 
-model_linear_leafn <- lmerTest::lmer(linear_formula, data = data_treeline_leafn, REML = FALSE)
-model_treeline_ml_leafn <- lmerTest::lmer(breakpoint_formula, data = data_treeline_leafn,
-                                          REML = FALSE)
+# Check output of the segmented regression
+print(summary(seg_leafn))
+# Estimated Break-Point(s):
+#   Est. St.Err
+# psi1.distance_to_boundary_km 752.935 37.818
+# 
+# Coefficients of the linear terms:
+#   Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)                 2.928e+00  6.509e-03  449.76   <2e-16 ***
+#   distance_to_boundary_km     4.013e-04  2.151e-05   18.66   <2e-16 ***
+#   U1.distance_to_boundary_km -1.048e-03  7.106e-05  -14.75       NA    
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 0.5162 on 7203 degrees of freedom
+# Multiple R-Squared: 0.05749,  Adjusted R-squared: 0.0571 
 
-# Likelihood ratio test: does the breakpoint model fit significantly better?
-lr_treeline_leafn <- 2 * (as.numeric(logLik(model_treeline_ml_leafn)) -
-                            as.numeric(logLik(model_linear_leafn)))
-p_treeline_leafn <- pchisq(lr_treeline_leafn, df = 1, lower.tail = FALSE)
+# Davies test: is there a change in slope anywhere along the gradient?
+davies_leafn <- davies.test(lm_leafn, seg.Z = ~ distance_to_boundary_km)
+print(davies_leafn)
+# data:  formula = log_trait ~ distance_to_boundary_km ,   method = lm 
+# model = gaussian , link = identity  
+# segmented variable = distance_to_boundary_km
+# 'best' at = 601.61, n.points = 8, p-value < 2.2e-16
+# alternative hypothesis: two.sided
 
-# Delta AIC: positive = the breakpoint model fits better (~2 = weak, >4 = clearer support)
-daic_treeline_leafn <- AIC(model_linear_leafn) - AIC(model_treeline_ml_leafn)
+# Breakpoint and its 95% CI (first column = estimate, then lower and upper limit)
+breakpoint_ci_leafn <- confint(seg_leafn)
+breakpoint_leafn <- breakpoint_ci_leafn[1, 1]
+breakpoint_lower_leafn <- breakpoint_ci_leafn[1, 2]
+breakpoint_upper_leafn <- breakpoint_ci_leafn[1, 3]
 
-cat("\nQUESTION 1 - breakpoint at the treeline: LR =", round(lr_treeline_leafn, 2),
-    ", p =", signif(p_treeline_leafn, 3),
-    ", delta AIC =", round(daic_treeline_leafn, 2),
-    "(positive = breakpoint model fits better)\n")
+# Slopes before (row 1) and after (row 2) the breakpoint
+slopes_leafn <- slope(seg_leafn)$distance_to_boundary_km
+print(slopes_leafn)
+# Est.    St.Err. t value   CI(95%).l   CI(95%).u
+# slope1  0.00040131 2.1510e-05 18.6560  0.00035914  0.00044347
+# slope2 -0.00064659 6.7726e-05 -9.5472 -0.00077935 -0.00051383
 
-# Slopes on each side of the treeline: the same breakpoint model refitted with
-# REML, which gives better estimates of the random effects for reporting.
-# 'below' = boreal-side slope, 'above' = tundra-side slope (per km)
-model_treeline_leafn <- lmerTest::lmer(breakpoint_formula, data = data_treeline_leafn,
-                                       REML = TRUE)
-print(summary(model_treeline_leafn))
-coefs_treeline_leafn <- summary(model_treeline_leafn)$coefficients
+# Delta AIC: positive = the breakpoint model fits better than the straight line
+daic_seg_leafn <- AIC(lm_leafn) - AIC(seg_leafn)
 
-# Model diagnostics: residuals vs fitted values (should show no pattern) and
-# a Q-Q plot (points should lie close to the line)
-residuals_leafn <- residuals(model_treeline_leafn, type = "pearson")
-png(here("figures", "RQ3_LeafN_model_diagnostics.png"),
-    width = 10, height = 5, units = "in", res = 300)
+cat("\nLeaf N - breakpoint:", round(breakpoint_leafn), "km (95% CI",
+    round(breakpoint_lower_leafn), "to", round(breakpoint_upper_leafn), "km)",
+    ifelse(breakpoint_lower_leafn <= 0 & breakpoint_upper_leafn >= 0,
+           "- CI includes the treeline", "- CI does not include the treeline"), "\n",
+    "  Davies test p =", signif(davies_leafn$p.value, 3),
+    "| delta AIC vs straight line =", round(daic_seg_leafn, 1), "\n")
+# Leaf N - breakpoint: 753 km (95% CI 679 to 827 km) - CI does not include the treeline 
+# Davies test p = 1.05e-75 | delta AIC vs straight line = 350.1 
+
+## 6.3. Spatial autocorrelation of the residuals --------------------------------
+
+# GEt residuals
+leafn_data$resid_seg <- residuals(seg_leafn)
+
+# Mean residual per site, with the site's projected coordinates
+sites_leafn <- leafn_data |>
+  group_by(site_name) |>
+  summarise(x_km = first(x_km),
+            y_km = first(y_km),
+            resid_seg = mean(resid_seg),
+            n_records = n(),
+            .groups = "drop")
+
+# Distances between all pairs of sites (km)
+site_dist_leafn <- as.matrix(dist(cbind(sites_leafn$x_km, sites_leafn$y_km)))
+
+# Moran's I over all sites (inverse-distance weights)
+weights_leafn <- 1 / site_dist_leafn
+weights_leafn[!is.finite(weights_leafn)] <- 0   # a site's distance to itself
+moran_seg_leafn <- Moran.I(sites_leafn$resid_seg, weights_leafn)
+
+cat("\nLeaf N - Moran's I of the segmented residuals (", nrow(sites_leafn), " sites): I =",
+    round(moran_seg_leafn$observed, 3), ", p =", signif(moran_seg_leafn$p.value, 3), "\n")
+# Leaf N - Moran's I of the segmented residuals ( 210  sites): I = 0.28 , p = 8.73e-14
+
+# Correlogram: Moran's I among pairs of sites within each distance class
+correlogram_leafn <- data.frame()
+for (i in seq_len(length(correlogram_breaks) - 1)) {
+  
+  # Weight 1 for pairs of sites within this distance class, 0 otherwise
+  class_weights <- (site_dist_leafn > correlogram_breaks[i] &
+                      site_dist_leafn <= correlogram_breaks[i + 1]) * 1
+  
+  # Skip classes without any pairs of sites
+  if (sum(class_weights) == 0) next
+  
+  moran_class <- Moran.I(sites_leafn$resid_seg, class_weights)
+  
+  correlogram_leafn <- bind_rows(correlogram_leafn, data.frame(
+    Trait = "LeafN",
+    distance_km = (correlogram_breaks[i] + correlogram_breaks[i + 1]) / 2,
+    n_pairs = sum(class_weights) / 2,
+    Model = segmented_label,
+    morans_I = moran_class$observed,
+    p = moran_class$p.value))
+}
+
+## 6.4. Model validation ---------------------------------------------------------
+
+# Residuals vs fitted values and Q-Q plot 
+png(here("figures", "RQ3_LeafN_validation_segmented.png"),
+    width = 12, height = 5, units = "in", res = 200)
 par(mfrow = c(1, 2))
-plot(fitted(model_treeline_leafn), residuals_leafn,
-     xlab = "Fitted values", ylab = "Pearson residuals", main = "Leaf N")
+
+plot(fitted(seg_leafn), leafn_data$resid_seg, pch = 16, cex = 0.4, col = rgb(0, 0, 0, 0.2),
+     xlab = "Fitted values", ylab = "Residuals",
+     main = "Leaf N - Segmented: residuals vs fitted")
 abline(h = 0, col = "red", lty = 2)
-qqnorm(residuals_leafn, main = "Leaf N - Q-Q Plot")
-qqline(residuals_leafn, col = "red")
+
+qqnorm(leafn_data$resid_seg, pch = 16, cex = 0.4, main = "Leaf N - Segmented: Q-Q plot")
+qqline(leafn_data$resid_seg, col = "red")
+
 par(mfrow = c(1, 1))
 dev.off()
 
-## 6.3. Question 2: is there a breakpoint somewhere else? ----------------------
-# The breakpoint model is fitted with the breakpoint placed at many candidate
-# locations along the gradient ("profile likelihood"). The best-fitting
-# candidate is then compared with
-#   (a) no breakpoint (delta AIC), and
-#   (b) a breakpoint at the treeline (deviance difference).
-# Candidates that fit almost as well as the best one (deviance difference
-# <= 3.84) form the 95% confidence interval (CI) of the breakpoint location.
-# Only trust the location if the profile has one clear dip and the CI does not
-# reach the edge of the search range (warnings are printed if not).
+## 6.5. Figure -------------------------------------------------------------------
 
-# Range of candidates: the central 90% of the data
-search_range_leafn <- quantile(leafn_data$distance_to_boundary_km, c(profile_trim, 1 - profile_trim))
+# Put results into single df
+seg_line_leafn <- data.frame(distance_to_boundary_km = seq(min(leafn_data$distance_to_boundary_km),
+                                                           max(leafn_data$distance_to_boundary_km),
+                                                           length.out = 300))
+# Predict values
+seg_line_leafn$predicted <- predict(seg_leafn, newdata = seg_line_leafn)
 
-# Step 1: coarse grid of candidates; fit the breakpoint model at each one and
-# store how well it fits (log-likelihood)
-coarse_psi_leafn <- seq(ceiling(search_range_leafn[1]), floor(search_range_leafn[2]),
-                        by = coarse_step_km)
-coarse_loglik_leafn <- numeric(length(coarse_psi_leafn))
-cat("Fitting", length(coarse_psi_leafn), "coarse candidate breakpoints...\n")
+# Slope labels as % change per km
+label_before_leafn <- paste0("Before breakpoint: ",
+                             sprintf("%+.3f", 100 * (exp(slopes_leafn[1, 1]) - 1)), "% per km")
+label_after_leafn <- paste0("After breakpoint: ",
+                            sprintf("%+.3f", 100 * (exp(slopes_leafn[2, 1]) - 1)), "% per km")
+title_seg_leafn <- paste0("Breakpoint: ", round(breakpoint_leafn), " km (95% CI ",
+                          round(breakpoint_lower_leafn), " to ", round(breakpoint_upper_leafn),
+                          "); Davies p ", ifelse(davies_leafn$p.value < 0.001, "< 0.001",
+                                                 paste0("= ", sprintf("%.3f", davies_leafn$p.value))),
+                          ", \u0394AIC = ", sprintf("%.1f", daic_seg_leafn))
 
-for (i in seq_along(coarse_psi_leafn)) {
-  candidate_data <- leafn_data |>
-    mutate(below = pmin(distance_to_boundary_km - coarse_psi_leafn[i], 0),
-           above = pmax(distance_to_boundary_km - coarse_psi_leafn[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  coarse_loglik_leafn[i] <- as.numeric(logLik(candidate_model))
-}
-
-# Step 2: finer grid of candidates around the best coarse candidate
-best_coarse_leafn <- coarse_psi_leafn[which.max(coarse_loglik_leafn)]
-fine_psi_leafn <- seq(max(ceiling(search_range_leafn[1]), best_coarse_leafn - fine_window_km),
-                      min(floor(search_range_leafn[2]), best_coarse_leafn + fine_window_km),
-                      by = fine_step_km)
-fine_psi_leafn <- setdiff(fine_psi_leafn, coarse_psi_leafn)   # skip candidates already fitted
-fine_loglik_leafn <- numeric(length(fine_psi_leafn))
-cat("Fitting", length(fine_psi_leafn), "fine candidate breakpoints...\n")
-
-for (i in seq_along(fine_psi_leafn)) {
-  candidate_data <- leafn_data |>
-    mutate(below = pmin(distance_to_boundary_km - fine_psi_leafn[i], 0),
-           above = pmax(distance_to_boundary_km - fine_psi_leafn[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  fine_loglik_leafn[i] <- as.numeric(logLik(candidate_model))
-}
-
-# All candidates, sorted by distance. delta_deviance = how much worse each
-# candidate fits than the best one (0 = the best candidate)
-profile_leafn <- data.frame(psi_km = c(coarse_psi_leafn, fine_psi_leafn),
-                            logLik = c(coarse_loglik_leafn, fine_loglik_leafn)) |>
-  arrange(psi_km) |>
-  mutate(delta_deviance = 2 * (max(logLik) - logLik))
-
-# Best breakpoint
-best_index_leafn <- which.max(profile_leafn$logLik)
-breakpoint_leafn <- profile_leafn$psi_km[best_index_leafn]
-
-# 95% CI: starting at the best candidate, move outwards in both directions for
-# as long as the candidates fit almost as well (delta_deviance <= 3.84)
-ci_threshold <- qchisq(0.95, df = 1)
-
-lower_index_leafn <- best_index_leafn
-while (lower_index_leafn > 1 &&
-       profile_leafn$delta_deviance[lower_index_leafn - 1] <= ci_threshold) {
-  lower_index_leafn <- lower_index_leafn - 1
-}
-
-upper_index_leafn <- best_index_leafn
-while (upper_index_leafn < nrow(profile_leafn) &&
-       profile_leafn$delta_deviance[upper_index_leafn + 1] <= ci_threshold) {
-  upper_index_leafn <- upper_index_leafn + 1
-}
-
-breakpoint_lower_leafn <- profile_leafn$psi_km[lower_index_leafn]
-breakpoint_upper_leafn <- profile_leafn$psi_km[upper_index_leafn]
-
-# Warning signs that the location cannot be trusted:
-#   - the CI reaches the first or last candidate (the edge of the search range)
-#   - a second, separate group of candidates also fits almost as well
-ci_at_edge_leafn <- lower_index_leafn == 1 | upper_index_leafn == nrow(profile_leafn)
-second_dip_leafn <- any(profile_leafn$delta_deviance <= ci_threshold &
-                          (seq_len(nrow(profile_leafn)) < lower_index_leafn |
-                             seq_len(nrow(profile_leafn)) > upper_index_leafn))
-
-# (a) Best breakpoint vs no breakpoint: delta AIC, counting the breakpoint
-#     location as an extra estimated parameter (positive = breakpoint better)
-daic_best_vs_linear_leafn <- 2 * (max(profile_leafn$logLik) -
-                                    as.numeric(logLik(model_linear_leafn))) - 2 * 2
-
-# (b) Best breakpoint vs breakpoint at the treeline: deviance difference
-#     (below 3.84 = the treeline fits about as well as the best location)
-deviance_treeline_vs_best_leafn <- 2 * (max(profile_leafn$logLik) -
-                                          as.numeric(logLik(model_treeline_ml_leafn)))
-
-cat("\nQUESTION 2 - best breakpoint:", breakpoint_leafn, "km (95% CI",
-    breakpoint_lower_leafn, "to", breakpoint_upper_leafn, "km)\n",
-    "  delta AIC vs no breakpoint:", round(daic_best_vs_linear_leafn, 2), "\n",
-    "  treeline vs best location, deviance difference:",
-    round(deviance_treeline_vs_best_leafn, 2),
-    ifelse(deviance_treeline_vs_best_leafn <= ci_threshold,
-           "(treeline fits about as well)", "(treeline fits significantly worse)"), "\n",
-    ifelse(ci_at_edge_leafn, "  WARNING: CI reaches the edge of the search range\n", ""),
-    ifelse(second_dip_leafn, "  WARNING: second dip in the profile\n", ""))
-
-# Supplementary figure: how well each candidate fits. Candidates below the red
-# line lie within the 95% CI; the solid line marks the best candidate and the
-# dashed grey line the treeline.
-plot_profile_leafn <- ggplot(profile_leafn, aes(x = psi_km, y = delta_deviance)) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 1) +
-  geom_hline(yintercept = ci_threshold, linetype = "dashed", colour = "red") +
-  geom_vline(xintercept = breakpoint_leafn, colour = "black") +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
-  labs(x = "Candidate breakpoint (km from the treeline)",
-       y = "Deviance relative to best breakpoint",
-       title = "Leaf N: points below the red line lie within the 95% CI") +
-  theme_rq3
-
-ggsave(here("figures", "FigureS_RQ3_LeafN_breakpoint_profile.png"),
-       plot = plot_profile_leafn, width = 9, height = 6, dpi = 300)
-
-## 6.4. Figure -------------------------------------------------------------------
-# All records (log scale) against distance to the treeline, with the fitted
-# line from the breakpoint model at the treeline (step .2). The title gives the
-# result of Question 1; the labels give the slope on each side.
-
-# Slope labels, converted from log-scale slopes to % change per km
-label_boreal_leafn <- paste0("Boreal side: ",
-                             sprintf("%+.2f", 100 * (exp(coefs_treeline_leafn["below", "Estimate"]) - 1)),
-                             "% per km\np = ",
-                             sprintf("%.3f", coefs_treeline_leafn["below", "Pr(>|t|)"]))
-label_tundra_leafn <- paste0("Tundra side: ",
-                             sprintf("%+.2f", 100 * (exp(coefs_treeline_leafn["above", "Estimate"]) - 1)),
-                             "% per km\np = ",
-                             sprintf("%.3f", coefs_treeline_leafn["above", "Pr(>|t|)"]))
-
-# Title: result of the test for a breakpoint at the treeline
-title_leafn <- paste0("Breakpoint at the treeline: LR = ", sprintf("%.2f", lr_treeline_leafn),
-                      ", p = ", sprintf("%.3f", p_treeline_leafn),
-                      ", \u0394AIC = ", sprintf("%.1f", daic_treeline_leafn))
-
-# Fitted line for an average species, location and site (random effects left
-# out with re.form = NA)
-line_leafn <- data.frame(distance_to_boundary_km = seq(min(leafn_data$distance_to_boundary_km),
-                                                       max(leafn_data$distance_to_boundary_km),
-                                                       length.out = 200)) |>
-  mutate(below = pmin(distance_to_boundary_km, 0),
-         above = pmax(distance_to_boundary_km, 0))
-line_leafn$predicted <- predict(model_treeline_leafn, newdata = line_leafn, re.form = NA)
-
-plot_leafn <- ggplot() +
+# Plot figure
+(plot_seg_leafn <- ggplot() +
+  annotate("rect", xmin = breakpoint_lower_leafn, xmax = breakpoint_upper_leafn,
+           ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.3) +
   geom_point(data = leafn_data, aes(x = distance_to_boundary_km, y = log_trait, colour = biome),
              alpha = 0.2, size = 1) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "gray30", linewidth = 0.7) +
-  geom_line(data = line_leafn, aes(x = distance_to_boundary_km, y = predicted),
+  geom_vline(xintercept = breakpoint_leafn, colour = "black", linewidth = 0.7) +
+  geom_line(data = seg_line_leafn, aes(x = distance_to_boundary_km, y = predicted),
             colour = fit_line_colour, linewidth = 1.5) +
-  annotate("text", x = -Inf, y = Inf, label = label_boreal_leafn,
+  annotate("text", x = -Inf, y = Inf, label = label_before_leafn,
            hjust = -0.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
-  annotate("text", x = Inf, y = Inf, label = label_tundra_leafn,
+  annotate("text", x = Inf, y = Inf, label = label_after_leafn,
            hjust = 1.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
   scale_colour_manual(values = biome_colours, labels = biome_labels, name = "Biome") +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +   # room for the labels
-  labs(x = "Distance to treeline (km)", y = "Leaf N (mg/g, log scale)", title = title_leafn) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +   # room for the labels
+  labs(x = "Distance to Biome Boundary (km)", y = "Leaf N (mg/g, log scale)", title = title_seg_leafn) +
   theme_rq3 +
   theme(legend.position = "none") +
-  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))))
 
-print(plot_leafn)
-ggsave(here("figures", "Figure4c_LeafN_treeline.png"), plot = plot_leafn, width = 10, height = 6, dpi = 600)
+# Save figure
+ggsave(here("figures", "Figure4c_LeafN_segmented.png"),
+       plot = plot_seg_leafn, width = 10, height = 6, dpi = 600)
 
-## 6.5. Robustness check: separate models for each side --------------------------
-# The slopes in step .2 come from ONE model in which the boreal and tundra lines
-# meet at the treeline and share the random effects. Here each side is
-# analysed on its own, without those assumptions. If the slopes are similar,
-# the reported slopes do not depend on the lines meeting at the treeline.
-# Note: these models do NOT test whether the two slopes differ; that is the
-# test in step .2.
-
-boreal_side_leafn <- leafn_data |> filter(distance_to_boundary_km < 0)
-tundra_side_leafn <- leafn_data |> filter(distance_to_boundary_km >= 0)
-
-model_boreal_side_leafn <- lmerTest::lmer(side_formula, data = boreal_side_leafn, REML = TRUE)
-coef_boreal_side_leafn <- summary(model_boreal_side_leafn)$coefficients["distance_to_boundary_km", ]
-
-model_tundra_side_leafn <- lmerTest::lmer(side_formula, data = tundra_side_leafn, REML = TRUE)
-coef_tundra_side_leafn <- summary(model_tundra_side_leafn)$coefficients["distance_to_boundary_km", ]
-
-# Slopes from the one model (step .2) next to the separate models, as % per km
-print(data.frame(
-  Side = c("Boreal side", "Tundra side"),
-  one_model_pct_per_km = 100 * (exp(coefs_treeline_leafn[c("below", "above"), "Estimate"]) - 1),
-  one_model_p = coefs_treeline_leafn[c("below", "above"), "Pr(>|t|)"],
-  separate_pct_per_km = 100 * (exp(c(coef_boreal_side_leafn[["Estimate"]],
-                                     coef_tundra_side_leafn[["Estimate"]])) - 1),
-  separate_p = c(coef_boreal_side_leafn[["Pr(>|t|)"]], coef_tundra_side_leafn[["Pr(>|t|)"]]),
-  row.names = NULL
-), digits = 3)
-
-## 6.6. Collect the results ---------------------------------------------------------
-# One row with everything for this trait; combined across traits in section 8
-
-results_leafn <- data.frame(
-  Trait = "LeafN",
-  n_records = nrow(leafn_data),
-  n_species = n_distinct(leafn_data$StandardSpeciesName),
-  n_sites = n_distinct(leafn_data$site_name),
-  n_locations_boreal = n_locations_boreal_leafn,
-  n_locations_tundra = n_locations_tundra_leafn,
-  # Question 1: breakpoint at the treeline, and the slopes on each side
-  LR_treeline = lr_treeline_leafn,
-  p_treeline = p_treeline_leafn,
-  dAIC_treeline = daic_treeline_leafn,
-  slope_boreal = coefs_treeline_leafn["below", "Estimate"],
-  SE_boreal = coefs_treeline_leafn["below", "Std. Error"],
-  df_boreal = coefs_treeline_leafn["below", "df"],
-  p_boreal = coefs_treeline_leafn["below", "Pr(>|t|)"],
-  slope_tundra = coefs_treeline_leafn["above", "Estimate"],
-  SE_tundra = coefs_treeline_leafn["above", "Std. Error"],
-  df_tundra = coefs_treeline_leafn["above", "df"],
-  p_tundra = coefs_treeline_leafn["above", "Pr(>|t|)"],
-  # Robustness check: separate models per side
-  sep_n_locations_boreal = n_distinct(boreal_side_leafn$location),
-  sep_slope_boreal = coef_boreal_side_leafn[["Estimate"]],
-  sep_SE_boreal = coef_boreal_side_leafn[["Std. Error"]],
-  sep_df_boreal = coef_boreal_side_leafn[["df"]],
-  sep_p_boreal = coef_boreal_side_leafn[["Pr(>|t|)"]],
-  sep_n_locations_tundra = n_distinct(tundra_side_leafn$location),
-  sep_slope_tundra = coef_tundra_side_leafn[["Estimate"]],
-  sep_SE_tundra = coef_tundra_side_leafn[["Std. Error"]],
-  sep_df_tundra = coef_tundra_side_leafn[["df"]],
-  sep_p_tundra = coef_tundra_side_leafn[["Pr(>|t|)"]],
-  # Question 2: best breakpoint anywhere along the gradient
-  best_breakpoint_km = breakpoint_leafn,
-  best_breakpoint_lower95_km = breakpoint_lower_leafn,
-  best_breakpoint_upper95_km = breakpoint_upper_leafn,
-  ci_at_search_edge = ci_at_edge_leafn,
-  second_dip = second_dip_leafn,
-  dAIC_best_vs_linear = daic_best_vs_linear_leafn,
-  deviance_treeline_vs_best = deviance_treeline_vs_best_leafn
-)
+# Collect all results into df
+results_seg_leafn <- data.frame(Trait = "LeafN",
+                                n_records = nrow(leafn_data),
+                                n_species = n_distinct(leafn_data$StandardSpeciesName),
+                                n_sites = n_distinct(leafn_data$site_name),
+                                n_locations = n_distinct(leafn_data$location),
+                                breakpoint_km = breakpoint_leafn,
+                                breakpoint_lower = breakpoint_lower_leafn,
+                                breakpoint_upper = breakpoint_upper_leafn,
+                                ci_includes_treeline = breakpoint_lower_leafn <= 0 & breakpoint_upper_leafn >= 0,
+                                davies_p = davies_leafn$p.value,
+                                dAIC_vs_straight_line = daic_seg_leafn,
+                                slope_before = slopes_leafn[1, 1],
+                                slope_before_lower = slopes_leafn[1, 4],
+                                slope_before_upper = slopes_leafn[1, 5],
+                                slope_after = slopes_leafn[2, 1],
+                                slope_after_lower = slopes_leafn[2, 4],
+                                slope_after_upper = slopes_leafn[2, 5],
+                                n_sites_autocorrelation = nrow(sites_leafn),
+                                morans_I = moran_seg_leafn$observed,
+                                morans_I_p = moran_seg_leafn$p.value)
 
 # 7. SEED MASS ------------------------------------------------------------
-
-# N.B: very few boreal seed mass records (3 locations in total), so the
-# breakpoint models will most likely be marked 'not fitted'.
+# N.B.: very few boreal seed mass records (3 locations in total), so results
+# for the boreal side are very uncertain.
 
 ## 7.1. Prepare the data -------------------------------------------------------
 
-# Records of this trait with a positive standardised value (log() needs > 0)
+# Keep only records that can be logged (> 0)
 seedmass_data <- cleaned_traits_final |>
   filter(TraitNameNew == "SeedMass", !is.na(StdValue), StdValue > 0)
 
-# Outliers: values more than 5 SD from their biome's mean, calculated on the
-# LOG scale (the scale used in the models). On the original scale, e.g. tall
-# trees look extreme next to many small plants and would be wrongly removed.
+# Outliers per biome: values more than 5 SD from the biome mean on the LOG
+# scale (the scale used in the models)
 seedmass_data <- seedmass_data |>
   group_by(biome) |>
   mutate(lower_bound = exp(mean(log(StdValue)) - 5 * sd(log(StdValue))),
          upper_bound = exp(mean(log(StdValue)) + 5 * sd(log(StdValue)))) |>
   ungroup()
 
+# Check how many outliers are removed
 cat("Seed mass outliers removed:", sum(seedmass_data$StdValue < seedmass_data$lower_bound |
-                                         seedmass_data$StdValue > seedmass_data$upper_bound), "\n")
+                                         seedmass_data$StdValue > seedmass_data$upper_bound), "\n") #0
 
-# Remove the outliers and log-transform the trait
+# Remove the outliers, log-transform the trait, and make the grouping
+# variables factors (needed for the random effects in the GAM script)
 seedmass_data <- seedmass_data |>
   filter(StdValue >= lower_bound, StdValue <= upper_bound) |>
   dplyr::select(-lower_bound, -upper_bound) |>
-  mutate(log_trait = log(StdValue))
+  mutate(log_trait = log(StdValue),
+         species_f = factor(StandardSpeciesName),
+         location_f = factor(location),
+         site_f = factor(site_name))
 
-# How much data there is on each side of the treeline
+# Check how much data there is on each side of the treeline
 print(seedmass_data |>
         group_by(biome) |>
         summarise(n_records = n(),
                   n_species = n_distinct(StandardSpeciesName),
                   n_sites = n_distinct(site_name),
                   n_locations = n_distinct(location)))
+# biome  n_records n_species n_sites n_locations
+# <chr>      <int>     <int>   <int>       <int>
+# 1 boreal        23         9       3           3
+# 2 tundra       791       117      33          17
 
-# Number of independent locations on each side (reported in the results table)
-n_locations_boreal_seedmass <- n_distinct(seedmass_data$location[seedmass_data$distance_to_boundary_km < 0])
-n_locations_tundra_seedmass <- n_distinct(seedmass_data$location[seedmass_data$distance_to_boundary_km >= 0])
+## 7.2. Segmented regression without random effects ----------------------------
 
-## 7.2. Question 1: is there a breakpoint at the treeline (0 km)? --------------
-# Two models are compared:
-#   - one straight line along the whole gradient (no breakpoint)
-#   - a line that can change slope at the treeline (breakpoint at 0 km)
-# Both are fitted with maximum likelihood (REML = FALSE), which is needed to
-# compare models with different fixed effects. Because the breakpoint location
-# (0 km) is fixed in advance, the likelihood ratio test with 1 df is valid.
+# Straight line
+lm_seedmass <- lm(lm_formula, data = seedmass_data)
 
-# Add the breakpoint variables for a breakpoint at 0 km
-data_treeline_seedmass <- seedmass_data |>
-  mutate(below = pmin(distance_to_boundary_km, 0),    # boreal side
-         above = pmax(distance_to_boundary_km, 0))    # tundra side
+# Breakpoint model
+seg_seedmass <- segmented(lm_seedmass, seg.Z = ~ distance_to_boundary_km, psi = median(seedmass_data$distance_to_boundary_km),
+                          control = seg.control(n.boot = seg_restarts))
 
-model_linear_seedmass <- lmerTest::lmer(linear_formula, data = data_treeline_seedmass, REML = FALSE)
-model_treeline_ml_seedmass <- lmerTest::lmer(breakpoint_formula, data = data_treeline_seedmass,
-                                             REML = FALSE)
+# Check the summary of the segmented model
+print(summary(seg_seedmass))
+# Estimated Break-Point(s):
+#   Est. St.Err
+# psi1.distance_to_boundary_km 97.597 34.507
+# 
+# Coefficients of the linear terms:
+#   Estimate Std. Error t value Pr(>|t|)    
+# (Intercept)                -1.0930806  0.0535458 -20.414  < 2e-16 ***
+#   distance_to_boundary_km     0.0062413  0.0008657   7.210 1.29e-12 ***
+#   U1.distance_to_boundary_km -0.0063084  0.0009015  -6.998       NA    
+# ---
+#   Signif. codes:  0 ‘***’ 0.001 ‘**’ 0.01 ‘*’ 0.05 ‘.’ 0.1 ‘ ’ 1
+# 
+# Residual standard error: 1.262 on 810 degrees of freedom
+# Multiple R-Squared: 0.06659,  Adjusted R-squared: 0.06314 
 
-# Likelihood ratio test: does the breakpoint model fit significantly better?
-lr_treeline_seedmass <- 2 * (as.numeric(logLik(model_treeline_ml_seedmass)) -
-                               as.numeric(logLik(model_linear_seedmass)))
-p_treeline_seedmass <- pchisq(lr_treeline_seedmass, df = 1, lower.tail = FALSE)
+# Davies test: is there a change in slope anywhere along the gradient?
+davies_seedmass <- davies.test(lm_seedmass, seg.Z = ~ distance_to_boundary_km)
+print(davies_seedmass)
+# data:  formula = log_trait ~ distance_to_boundary_km ,   method = lm 
+# model = gaussian , link = identity  
+# segmented variable = distance_to_boundary_km
+# 'best' at = 186.16, n.points = 8, p-value = 1.073e-08
+# alternative hypothesis: two.sided
 
-# Delta AIC: positive = the breakpoint model fits better (~2 = weak, >4 = clearer support)
-daic_treeline_seedmass <- AIC(model_linear_seedmass) - AIC(model_treeline_ml_seedmass)
+# Breakpoint and its 95% CI (first column = estimate, then lower and upper limit)
+breakpoint_ci_seedmass <- confint(seg_seedmass)
+breakpoint_seedmass <- breakpoint_ci_seedmass[1, 1]
+breakpoint_lower_seedmass <- breakpoint_ci_seedmass[1, 2]
+breakpoint_upper_seedmass <- breakpoint_ci_seedmass[1, 3]
 
-cat("\nQUESTION 1 - breakpoint at the treeline: LR =", round(lr_treeline_seedmass, 2),
-    ", p =", signif(p_treeline_seedmass, 3),
-    ", delta AIC =", round(daic_treeline_seedmass, 2),
-    "(positive = breakpoint model fits better)\n")
+# Slopes before (row 1) and after (row 2) the breakpoint, with 95% CIs
+# (columns: estimate, SE, t value, lower and upper CI limit)
+slopes_seedmass <- slope(seg_seedmass)$distance_to_boundary_km
+print(slopes_seedmass)
+# Est.    St.Err.  t value   CI(95%).l  CI(95%).u
+# slope1  6.2413e-03 0.00086567  7.20980  0.00454210 0.00794060
+# slope2 -6.7043e-05 0.00025146 -0.26661 -0.00056063 0.00042655
 
-# Slopes on each side of the treeline: the same breakpoint model refitted with
-# REML, which gives better estimates of the random effects for reporting.
-# 'below' = boreal-side slope, 'above' = tundra-side slope (per km)
-model_treeline_seedmass <- lmerTest::lmer(breakpoint_formula, data = data_treeline_seedmass,
-                                          REML = TRUE)
-print(summary(model_treeline_seedmass))
-coefs_treeline_seedmass <- summary(model_treeline_seedmass)$coefficients
+# Delta AIC: positive = the breakpoint model fits better than the straight line
+daic_seg_seedmass <- AIC(lm_seedmass) - AIC(seg_seedmass)
 
-# Model diagnostics: residuals vs fitted values (should show no pattern) and
-# a Q-Q plot (points should lie close to the line)
-residuals_seedmass <- residuals(model_treeline_seedmass, type = "pearson")
-png(here("figures", "RQ3_SeedMass_model_diagnostics.png"),
-    width = 10, height = 5, units = "in", res = 300)
+cat("\nSeed mass - breakpoint:", round(breakpoint_seedmass), "km (95% CI",
+    round(breakpoint_lower_seedmass), "to", round(breakpoint_upper_seedmass), "km)",
+    ifelse(breakpoint_lower_seedmass <= 0 & breakpoint_upper_seedmass >= 0,
+           "- CI includes the treeline", "- CI does not include the treeline"), "\n",
+    "  Davies test p =", signif(davies_seedmass$p.value, 3),
+    "| delta AIC vs straight line =", round(daic_seg_seedmass, 1), "\n")
+# Seed mass - breakpoint: 98 km (95% CI 30 to 165 km) - CI does not include the treeline 
+# Davies test p = 1.07e-08 | delta AIC vs straight line = 44.1 
+
+## 7.3. Spatial autocorrelation of the residuals --------------------------------
+
+# Get residuals
+seedmass_data$resid_seg <- residuals(seg_seedmass)
+
+# Mean residual per site, with the site's projected coordinates
+sites_seedmass <- seedmass_data |>
+  group_by(site_name) |>
+  summarise(x_km = first(x_km),
+            y_km = first(y_km),
+            resid_seg = mean(resid_seg),
+            n_records = n(),
+            .groups = "drop")
+
+# Distances between all pairs of sites (km)
+site_dist_seedmass <- as.matrix(dist(cbind(sites_seedmass$x_km, sites_seedmass$y_km)))
+
+# Moran's I over all sites (inverse-distance weights)
+weights_seedmass <- 1 / site_dist_seedmass
+weights_seedmass[!is.finite(weights_seedmass)] <- 0   # a site's distance to itself
+moran_seg_seedmass <- Moran.I(sites_seedmass$resid_seg, weights_seedmass)
+
+cat("\nSeed mass - Moran's I of the segmented residuals (", nrow(sites_seedmass), " sites): I =",
+    round(moran_seg_seedmass$observed, 3), ", p =", signif(moran_seg_seedmass$p.value, 3), "\n")
+#Seed mass - Moran's I of the segmented residuals ( 36  sites): I = 0.009 , p = 0.698
+
+# Correlogram: Moran's I among pairs of sites within each distance class
+correlogram_seedmass <- data.frame()
+for (i in seq_len(length(correlogram_breaks) - 1)) {
+  
+  # Weight 1 for pairs of sites within this distance class, 0 otherwise
+  class_weights <- (site_dist_seedmass > correlogram_breaks[i] &
+                      site_dist_seedmass <= correlogram_breaks[i + 1]) * 1
+  
+  # Skip classes without any pairs of sites
+  if (sum(class_weights) == 0) next
+  
+  moran_class <- Moran.I(sites_seedmass$resid_seg, class_weights)
+  
+  correlogram_seedmass <- bind_rows(correlogram_seedmass, data.frame(
+    Trait = "SeedMass",
+    distance_km = (correlogram_breaks[i] + correlogram_breaks[i + 1]) / 2,
+    n_pairs = sum(class_weights) / 2,
+    Model = segmented_label,
+    morans_I = moran_class$observed,
+    p = moran_class$p.value))
+}
+ 
+## 7.4. Model validation ---------------------------------------------------------
+
+# Residuals vs fitted values and Q-Q plot
+png(here("figures", "RQ3_SeedMass_validation_segmented.png"),
+    width = 12, height = 5, units = "in", res = 200)
 par(mfrow = c(1, 2))
-plot(fitted(model_treeline_seedmass), residuals_seedmass,
-     xlab = "Fitted values", ylab = "Pearson residuals", main = "Seed mass")
+
+plot(fitted(seg_seedmass), seedmass_data$resid_seg, pch = 16, cex = 0.4, col = rgb(0, 0, 0, 0.2),
+     xlab = "Fitted values", ylab = "Residuals",
+     main = "Seed mass - Segmented: residuals vs fitted")
 abline(h = 0, col = "red", lty = 2)
-qqnorm(residuals_seedmass, main = "Seed mass - Q-Q Plot")
-qqline(residuals_seedmass, col = "red")
+
+qqnorm(seedmass_data$resid_seg, pch = 16, cex = 0.4, main = "Seed mass - Segmented: Q-Q plot")
+qqline(seedmass_data$resid_seg, col = "red")
+
 par(mfrow = c(1, 1))
 dev.off()
 
-## 7.3. Question 2: is there a breakpoint somewhere else? ----------------------
-# The breakpoint model is fitted with the breakpoint placed at many candidate
-# locations along the gradient ("profile likelihood"). The best-fitting
-# candidate is then compared with
-#   (a) no breakpoint (delta AIC), and
-#   (b) a breakpoint at the treeline (deviance difference).
-# Candidates that fit almost as well as the best one (deviance difference
-# <= 3.84) form the 95% confidence interval (CI) of the breakpoint location.
-# Only trust the location if the profile has one clear dip and the CI does not
-# reach the edge of the search range (warnings are printed if not).
+## 7.5. Figure -------------------------------------------------------------------
 
-# Range of candidates: the central 90% of the data
-search_range_seedmass <- quantile(seedmass_data$distance_to_boundary_km, c(profile_trim, 1 - profile_trim))
+# All results in one df
+seg_line_seedmass <- data.frame(distance_to_boundary_km = seq(min(seedmass_data$distance_to_boundary_km),
+                                                              max(seedmass_data$distance_to_boundary_km),
+                                                              length.out = 300))
+# Predict values
+seg_line_seedmass$predicted <- predict(seg_seedmass, newdata = seg_line_seedmass)
 
-# Step 1: coarse grid of candidates; fit the breakpoint model at each one and
-# store how well it fits (log-likelihood)
-coarse_psi_seedmass <- seq(ceiling(search_range_seedmass[1]), floor(search_range_seedmass[2]),
-                           by = coarse_step_km)
-coarse_loglik_seedmass <- numeric(length(coarse_psi_seedmass))
-cat("Fitting", length(coarse_psi_seedmass), "coarse candidate breakpoints...\n")
+# Slope labels as % change per km
+label_before_seedmass <- paste0("Before breakpoint: ",
+                                sprintf("%+.3f", 100 * (exp(slopes_seedmass[1, 1]) - 1)), "% per km")
+label_after_seedmass <- paste0("After breakpoint: ",
+                               sprintf("%+.3f", 100 * (exp(slopes_seedmass[2, 1]) - 1)), "% per km")
+title_seg_seedmass <- paste0("Breakpoint: ", round(breakpoint_seedmass), " km (95% CI ",
+                             round(breakpoint_lower_seedmass), " to ", round(breakpoint_upper_seedmass),
+                             "); Davies p ", ifelse(davies_seedmass$p.value < 0.001, "< 0.001",
+                                                    paste0("= ", sprintf("%.3f", davies_seedmass$p.value))),
+                             ", \u0394AIC = ", sprintf("%.1f", daic_seg_seedmass))
 
-for (i in seq_along(coarse_psi_seedmass)) {
-  candidate_data <- seedmass_data |>
-    mutate(below = pmin(distance_to_boundary_km - coarse_psi_seedmass[i], 0),
-           above = pmax(distance_to_boundary_km - coarse_psi_seedmass[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  coarse_loglik_seedmass[i] <- as.numeric(logLik(candidate_model))
-}
-
-# Step 2: finer grid of candidates around the best coarse candidate
-best_coarse_seedmass <- coarse_psi_seedmass[which.max(coarse_loglik_seedmass)]
-fine_psi_seedmass <- seq(max(ceiling(search_range_seedmass[1]), best_coarse_seedmass - fine_window_km),
-                         min(floor(search_range_seedmass[2]), best_coarse_seedmass + fine_window_km),
-                         by = fine_step_km)
-fine_psi_seedmass <- setdiff(fine_psi_seedmass, coarse_psi_seedmass)   # skip candidates already fitted
-fine_loglik_seedmass <- numeric(length(fine_psi_seedmass))
-cat("Fitting", length(fine_psi_seedmass), "fine candidate breakpoints...\n")
-
-for (i in seq_along(fine_psi_seedmass)) {
-  candidate_data <- seedmass_data |>
-    mutate(below = pmin(distance_to_boundary_km - fine_psi_seedmass[i], 0),
-           above = pmax(distance_to_boundary_km - fine_psi_seedmass[i], 0))
-  candidate_model <- suppressMessages(suppressWarnings(
-    lmerTest::lmer(breakpoint_formula, data = candidate_data, REML = FALSE,
-                   control = lmerControl(calc.derivs = FALSE))))
-  fine_loglik_seedmass[i] <- as.numeric(logLik(candidate_model))
-}
-
-# All candidates, sorted by distance. delta_deviance = how much worse each
-# candidate fits than the best one (0 = the best candidate)
-profile_seedmass <- data.frame(psi_km = c(coarse_psi_seedmass, fine_psi_seedmass),
-                               logLik = c(coarse_loglik_seedmass, fine_loglik_seedmass)) |>
-  arrange(psi_km) |>
-  mutate(delta_deviance = 2 * (max(logLik) - logLik))
-
-# Best breakpoint
-best_index_seedmass <- which.max(profile_seedmass$logLik)
-breakpoint_seedmass <- profile_seedmass$psi_km[best_index_seedmass]
-
-# 95% CI: starting at the best candidate, move outwards in both directions for
-# as long as the candidates fit almost as well (delta_deviance <= 3.84)
-ci_threshold <- qchisq(0.95, df = 1)
-
-lower_index_seedmass <- best_index_seedmass
-while (lower_index_seedmass > 1 &&
-       profile_seedmass$delta_deviance[lower_index_seedmass - 1] <= ci_threshold) {
-  lower_index_seedmass <- lower_index_seedmass - 1
-}
-
-upper_index_seedmass <- best_index_seedmass
-while (upper_index_seedmass < nrow(profile_seedmass) &&
-       profile_seedmass$delta_deviance[upper_index_seedmass + 1] <= ci_threshold) {
-  upper_index_seedmass <- upper_index_seedmass + 1
-}
-
-breakpoint_lower_seedmass <- profile_seedmass$psi_km[lower_index_seedmass]
-breakpoint_upper_seedmass <- profile_seedmass$psi_km[upper_index_seedmass]
-
-# Warning signs that the location cannot be trusted:
-#   - the CI reaches the first or last candidate (the edge of the search range)
-#   - a second, separate group of candidates also fits almost as well
-ci_at_edge_seedmass <- lower_index_seedmass == 1 | upper_index_seedmass == nrow(profile_seedmass)
-second_dip_seedmass <- any(profile_seedmass$delta_deviance <= ci_threshold &
-                             (seq_len(nrow(profile_seedmass)) < lower_index_seedmass |
-                                seq_len(nrow(profile_seedmass)) > upper_index_seedmass))
-
-# (a) Best breakpoint vs no breakpoint: delta AIC, counting the breakpoint
-#     location as an extra estimated parameter (positive = breakpoint better)
-daic_best_vs_linear_seedmass <- 2 * (max(profile_seedmass$logLik) -
-                                       as.numeric(logLik(model_linear_seedmass))) - 2 * 2
-
-# (b) Best breakpoint vs breakpoint at the treeline: deviance difference
-#     (below 3.84 = the treeline fits about as well as the best location)
-deviance_treeline_vs_best_seedmass <- 2 * (max(profile_seedmass$logLik) -
-                                             as.numeric(logLik(model_treeline_ml_seedmass)))
-
-cat("\nQUESTION 2 - best breakpoint:", breakpoint_seedmass, "km (95% CI",
-    breakpoint_lower_seedmass, "to", breakpoint_upper_seedmass, "km)\n",
-    "  delta AIC vs no breakpoint:", round(daic_best_vs_linear_seedmass, 2), "\n",
-    "  treeline vs best location, deviance difference:",
-    round(deviance_treeline_vs_best_seedmass, 2),
-    ifelse(deviance_treeline_vs_best_seedmass <= ci_threshold,
-           "(treeline fits about as well)", "(treeline fits significantly worse)"), "\n",
-    ifelse(ci_at_edge_seedmass, "  WARNING: CI reaches the edge of the search range\n", ""),
-    ifelse(second_dip_seedmass, "  WARNING: second dip in the profile\n", ""))
-
-# Supplementary figure: how well each candidate fits. Candidates below the red
-# line lie within the 95% CI; the solid line marks the best candidate and the
-# dashed grey line the treeline.
-plot_profile_seedmass <- ggplot(profile_seedmass, aes(x = psi_km, y = delta_deviance)) +
-  geom_line(linewidth = 0.8) +
-  geom_point(size = 1) +
-  geom_hline(yintercept = ci_threshold, linetype = "dashed", colour = "red") +
-  geom_vline(xintercept = breakpoint_seedmass, colour = "black") +
-  geom_vline(xintercept = 0, linetype = "dashed", colour = "grey50") +
-  labs(x = "Candidate breakpoint (km from the treeline)",
-       y = "Deviance relative to best breakpoint",
-       title = "Seed mass: points below the red line lie within the 95% CI") +
-  theme_rq3
-
-ggsave(here("figures", "FigureS_RQ3_SeedMass_breakpoint_profile.png"),
-       plot = plot_profile_seedmass, width = 9, height = 6, dpi = 300)
-
-## 7.4. Figure -------------------------------------------------------------------
-# All records (log scale) against distance to the treeline, with the fitted
-# line from the breakpoint model at the treeline (step .2). The title gives the
-# result of Question 1; the labels give the slope on each side.
-
-# Slope labels, converted from log-scale slopes to % change per km
-label_boreal_seedmass <- paste0("Boreal side: ",
-                                sprintf("%+.2f", 100 * (exp(coefs_treeline_seedmass["below", "Estimate"]) - 1)),
-                                "% per km\np = ",
-                                sprintf("%.3f", coefs_treeline_seedmass["below", "Pr(>|t|)"]))
-label_tundra_seedmass <- paste0("Tundra side: ",
-                                sprintf("%+.2f", 100 * (exp(coefs_treeline_seedmass["above", "Estimate"]) - 1)),
-                                "% per km\np = ",
-                                sprintf("%.3f", coefs_treeline_seedmass["above", "Pr(>|t|)"]))
-
-# Title: result of the test for a breakpoint at the treeline
-title_seedmass <- paste0("Breakpoint at the treeline: LR = ", sprintf("%.2f", lr_treeline_seedmass),
-                         ", p = ", sprintf("%.3f", p_treeline_seedmass),
-                         ", \u0394AIC = ", sprintf("%.1f", daic_treeline_seedmass))
-
-# Fitted line for an average species, location and site (random effects left
-# out with re.form = NA)
-line_seedmass <- data.frame(distance_to_boundary_km = seq(min(seedmass_data$distance_to_boundary_km),
-                                                          max(seedmass_data$distance_to_boundary_km),
-                                                          length.out = 200)) |>
-  mutate(below = pmin(distance_to_boundary_km, 0),
-         above = pmax(distance_to_boundary_km, 0))
-line_seedmass$predicted <- predict(model_treeline_seedmass, newdata = line_seedmass, re.form = NA)
-
-plot_seedmass <- ggplot() +
+# Plot figure
+(plot_seg_seedmass <- ggplot() +
+  annotate("rect", xmin = breakpoint_lower_seedmass, xmax = breakpoint_upper_seedmass,
+           ymin = -Inf, ymax = Inf, fill = "grey70", alpha = 0.3) +
   geom_point(data = seedmass_data, aes(x = distance_to_boundary_km, y = log_trait, colour = biome),
              alpha = 0.2, size = 1) +
   geom_vline(xintercept = 0, linetype = "dashed", colour = "gray30", linewidth = 0.7) +
-  geom_line(data = line_seedmass, aes(x = distance_to_boundary_km, y = predicted),
+  geom_vline(xintercept = breakpoint_seedmass, colour = "black", linewidth = 0.7) +
+  geom_line(data = seg_line_seedmass, aes(x = distance_to_boundary_km, y = predicted),
             colour = fit_line_colour, linewidth = 1.5) +
-  annotate("text", x = -Inf, y = Inf, label = label_boreal_seedmass,
+  annotate("text", x = -Inf, y = Inf, label = label_before_seedmass,
            hjust = -0.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
-  annotate("text", x = Inf, y = Inf, label = label_tundra_seedmass,
+  annotate("text", x = Inf, y = Inf, label = label_after_seedmass,
            hjust = 1.03, vjust = 1.2, size = fig_annot_text / .pt, fontface = "bold") +
   scale_colour_manual(values = biome_colours, labels = biome_labels, name = "Biome") +
-  scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +   # room for the labels
-  labs(x = "Distance to treeline (km)", y = "Seed mass (mg, log scale)", title = title_seedmass) +
+  scale_y_continuous(expand = expansion(mult = c(0.05, 0.2))) +   # room for the labels
+  labs(x = "Distance to Biome Boundary (km)", y = "Seed Mass (mg, log scale)", title = title_seg_seedmass) +
   theme_rq3 +
   theme(legend.position = "right") +
-  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1)))
+  guides(colour = guide_legend(override.aes = list(size = 3, alpha = 1))))
 
-print(plot_seedmass)
-ggsave(here("figures", "Figure4d_SeedMass_treeline.png"), plot = plot_seedmass, width = 10, height = 6, dpi = 600)
+# Save to file
+ggsave(here("figures", "Figure4d_SeedMass_segmented.png"),
+       plot = plot_seg_seedmass, width = 10, height = 6, dpi = 600)
 
-## 7.5. Robustness check: separate models for each side --------------------------
-# The slopes in step .2 come from ONE model in which the boreal and tundra lines
-# meet at the treeline and share the random effects. Here each side is
-# analysed on its own, without those assumptions. If the slopes are similar,
-# the reported slopes do not depend on the lines meeting at the treeline.
-# Note: these models do NOT test whether the two slopes differ; that is the
-# test in step .2.
+# Collect all records into single df
+results_seg_seedmass <- data.frame(Trait = "SeedMass",
+                                   n_records = nrow(seedmass_data),
+                                   n_species = n_distinct(seedmass_data$StandardSpeciesName),
+                                   n_sites = n_distinct(seedmass_data$site_name),
+                                   n_locations = n_distinct(seedmass_data$location),
+                                   breakpoint_km = breakpoint_seedmass,
+                                   breakpoint_lower = breakpoint_lower_seedmass,
+                                   breakpoint_upper = breakpoint_upper_seedmass,
+                                   ci_includes_treeline = breakpoint_lower_seedmass <= 0 & breakpoint_upper_seedmass >= 0,
+                                   davies_p = davies_seedmass$p.value,
+                                   dAIC_vs_straight_line = daic_seg_seedmass,
+                                   slope_before = slopes_seedmass[1, 1],
+                                   slope_before_lower = slopes_seedmass[1, 4],
+                                   slope_before_upper = slopes_seedmass[1, 5],
+                                   slope_after = slopes_seedmass[2, 1],
+                                   slope_after_lower = slopes_seedmass[2, 4],
+                                   slope_after_upper = slopes_seedmass[2, 5],
+                                   n_sites_autocorrelation = nrow(sites_seedmass),
+                                   morans_I = moran_seg_seedmass$observed,
+                                   morans_I_p = moran_seg_seedmass$p.value)
 
-boreal_side_seedmass <- seedmass_data |> filter(distance_to_boundary_km < 0)
-tundra_side_seedmass <- seedmass_data |> filter(distance_to_boundary_km >= 0)
 
-model_boreal_side_seedmass <- lmerTest::lmer(side_formula, data = boreal_side_seedmass, REML = TRUE)
-coef_boreal_side_seedmass <- summary(model_boreal_side_seedmass)$coefficients["distance_to_boundary_km", ]
+# 8. RESULTS TABLES, FIGURES AND SAVED DATA ------------------------------------
 
-model_tundra_side_seedmass <- lmerTest::lmer(side_formula, data = tundra_side_seedmass, REML = TRUE)
-coef_tundra_side_seedmass <- summary(model_tundra_side_seedmass)$coefficients["distance_to_boundary_km", ]
+## 8.1. Results table ----------------------------------------------------------
 
-# Slopes from the one model (step .2) next to the separate models, as % per km
-print(data.frame(
-  Side = c("Boreal side", "Tundra side"),
-  one_model_pct_per_km = 100 * (exp(coefs_treeline_seedmass[c("below", "above"), "Estimate"]) - 1),
-  one_model_p = coefs_treeline_seedmass[c("below", "above"), "Pr(>|t|)"],
-  separate_pct_per_km = 100 * (exp(c(coef_boreal_side_seedmass[["Estimate"]],
-                                     coef_tundra_side_seedmass[["Estimate"]])) - 1),
-  separate_p = c(coef_boreal_side_seedmass[["Pr(>|t|)"]], coef_tundra_side_seedmass[["Pr(>|t|)"]]),
-  row.names = NULL
-), digits = 3)
+# Combine all the results dfs
+segmented_results <- bind_rows(results_seg_ph, results_seg_sla,
+                               results_seg_leafn, results_seg_seedmass) |>
+  mutate(pct_before = 100 * (exp(slope_before) - 1),
+         pct_before_lower = 100 * (exp(slope_before_lower) - 1),
+         pct_before_upper = 100 * (exp(slope_before_upper) - 1),
+         pct_after = 100 * (exp(slope_after) - 1),
+         pct_after_lower = 100 * (exp(slope_after_lower) - 1),
+         pct_after_upper = 100 * (exp(slope_after_upper) - 1))
 
-## 7.6. Collect the results ---------------------------------------------------------
-# One row with everything for this trait; combined across traits in section 8
+# Save table
+write.csv(segmented_results, here("data", "derived_data", "RQ3_segmented_results_full.csv"),
+          row.names = FALSE)
 
-results_seedmass <- data.frame(
-  Trait = "SeedMass",
-  n_records = nrow(seedmass_data),
-  n_species = n_distinct(seedmass_data$StandardSpeciesName),
-  n_sites = n_distinct(seedmass_data$site_name),
-  n_locations_boreal = n_locations_boreal_seedmass,
-  n_locations_tundra = n_locations_tundra_seedmass,
-  # Question 1: breakpoint at the treeline, and the slopes on each side
-  LR_treeline = lr_treeline_seedmass,
-  p_treeline = p_treeline_seedmass,
-  dAIC_treeline = daic_treeline_seedmass,
-  slope_boreal = coefs_treeline_seedmass["below", "Estimate"],
-  SE_boreal = coefs_treeline_seedmass["below", "Std. Error"],
-  df_boreal = coefs_treeline_seedmass["below", "df"],
-  p_boreal = coefs_treeline_seedmass["below", "Pr(>|t|)"],
-  slope_tundra = coefs_treeline_seedmass["above", "Estimate"],
-  SE_tundra = coefs_treeline_seedmass["above", "Std. Error"],
-  df_tundra = coefs_treeline_seedmass["above", "df"],
-  p_tundra = coefs_treeline_seedmass["above", "Pr(>|t|)"],
-  # Robustness check: separate models per side
-  sep_n_locations_boreal = n_distinct(boreal_side_seedmass$location),
-  sep_slope_boreal = coef_boreal_side_seedmass[["Estimate"]],
-  sep_SE_boreal = coef_boreal_side_seedmass[["Std. Error"]],
-  sep_df_boreal = coef_boreal_side_seedmass[["df"]],
-  sep_p_boreal = coef_boreal_side_seedmass[["Pr(>|t|)"]],
-  sep_n_locations_tundra = n_distinct(tundra_side_seedmass$location),
-  sep_slope_tundra = coef_tundra_side_seedmass[["Estimate"]],
-  sep_SE_tundra = coef_tundra_side_seedmass[["Std. Error"]],
-  sep_df_tundra = coef_tundra_side_seedmass[["df"]],
-  sep_p_tundra = coef_tundra_side_seedmass[["Pr(>|t|)"]],
-  # Question 2: best breakpoint anywhere along the gradient
-  best_breakpoint_km = breakpoint_seedmass,
-  best_breakpoint_lower95_km = breakpoint_lower_seedmass,
-  best_breakpoint_upper95_km = breakpoint_upper_seedmass,
-  ci_at_search_edge = ci_at_edge_seedmass,
-  second_dip = second_dip_seedmass,
-  dAIC_best_vs_linear = daic_best_vs_linear_seedmass,
-  deviance_treeline_vs_best = deviance_treeline_vs_best_seedmass
-)
+# Tidy up the table to make it pretty for the Supplementary
+segmented_table <- segmented_results |>
+  transmute(Trait,
+            `Records / species / sites / locations` =
+              paste0(n_records, " / ", n_species, " / ", n_sites, " / ", n_locations),
+            `Breakpoint, km (95% CI)` = paste0(round(breakpoint_km), " (", round(breakpoint_lower),
+                                               " to ", round(breakpoint_upper), ")"),
+            `CI includes treeline` = ifelse(ci_includes_treeline, "yes", "no"),
+            `Davies test p` = format.pval(davies_p, digits = 3, eps = 1e-4),
+            `ΔAIC vs straight line` = sprintf("%.1f", dAIC_vs_straight_line),
+            `Before breakpoint: % per km (95% CI)` =
+              paste0(sprintf("%.3f", pct_before), " (", sprintf("%.3f", pct_before_lower),
+                     " to ", sprintf("%.3f", pct_before_upper), ")"),
+            `After breakpoint: % per km (95% CI)` =
+              paste0(sprintf("%.3f", pct_after), " (", sprintf("%.3f", pct_after_lower),
+                     " to ", sprintf("%.3f", pct_after_upper), ")"),
+            `Residuals: Moran's I (p)` =
+              paste0(sprintf("%.3f", morans_I), " (",
+                     format.pval(morans_I_p, digits = 3, eps = 1e-4), ")"))
 
-# 8. RESULTS TABLE AND COMBINED FIGURE -----------------------------------------
+# Quick check of the table
+print(tibble::as_tibble(segmented_table), width = Inf)
 
-## 8.1. Main results table -----------------------------------------------------
-
-# Combine the four traits; add Holm-corrected p-values (across the four
-# traits, for reference) and convert slopes and their 95% CIs to % per km
-results <- bind_rows(results_ph, results_sla, results_leafn, results_seedmass) |>
-  mutate(p_treeline_holm = p.adjust(p_treeline, method = "holm"),
-         pct_boreal = 100 * (exp(slope_boreal) - 1),
-         pct_boreal_lower = 100 * (exp(slope_boreal - qt(0.975, df_boreal) * SE_boreal) - 1),
-         pct_boreal_upper = 100 * (exp(slope_boreal + qt(0.975, df_boreal) * SE_boreal) - 1),
-         pct_tundra = 100 * (exp(slope_tundra) - 1),
-         pct_tundra_lower = 100 * (exp(slope_tundra - qt(0.975, df_tundra) * SE_tundra) - 1),
-         pct_tundra_upper = 100 * (exp(slope_tundra + qt(0.975, df_tundra) * SE_tundra) - 1))
-
-# All numbers, unrounded
-write.csv(results, here("data", "derived_data", "RQ3_results_full.csv"), row.names = FALSE)
-
-# Formatted table for the supplement
-results_table <- results |>
-  transmute(
-    Trait,
-    `Records / species / sites` = paste0(n_records, " / ", n_species, " / ", n_sites),
-    `Locations boreal / tundra` = paste0(n_locations_boreal, " / ", n_locations_tundra),
-    # Question 1
-    `Breakpoint at treeline: LR` = sprintf("%.2f", LR_treeline),
-    p = format.pval(p_treeline, digits = 3, eps = 1e-4),
-    `p (Holm)` = format.pval(p_treeline_holm, digits = 3, eps = 1e-4),
-    `ΔAIC` = sprintf("%.1f", dAIC_treeline),
-    `Boreal side: % per km (95% CI)` =
-      paste0(sprintf("%.2f", pct_boreal), " (", sprintf("%.2f", pct_boreal_lower),
-             " to ", sprintf("%.2f", pct_boreal_upper), ")"),
-    `Tundra side: % per km (95% CI)` =
-      paste0(sprintf("%.2f", pct_tundra), " (", sprintf("%.2f", pct_tundra_lower),
-             " to ", sprintf("%.2f", pct_tundra_upper), ")"),
-    # Question 2
-    `Best breakpoint, km (95% CI)` =
-      paste0(best_breakpoint_km, " (", best_breakpoint_lower95_km, " to ",
-             best_breakpoint_upper95_km, ")",
-             ifelse(ci_at_search_edge, " †", ""),
-             ifelse(second_dip, " ‡", "")),
-    `Best breakpoint: ΔAIC vs no breakpoint` = sprintf("%.1f", dAIC_best_vs_linear),
-    `Treeline vs best: deviance difference` = sprintf("%.1f", deviance_treeline_vs_best))
-
-print(tibble::as_tibble(results_table), width = Inf)
-
-write.csv(results_table, here("data", "derived_data", "TableS_RQ3_breakpoints.csv"),
+# Save the nice table
+write.csv(segmented_table, here("data", "derived_data", "TableS_RQ3_segmented.csv"),
           row.names = FALSE, fileEncoding = "UTF-8")
 
 # Caption notes:
-# - All records along the gradient; distance = distance to the treeline
-#   (shared boreal-tundra boundary). Linear mixed models of log trait values
-#   with random effects for species, location and site.
-# - Breakpoint at treeline: likelihood ratio test of a model with a change in
-#   slope at 0 km against a single straight line (1 df). ΔAIC = AIC(straight
-#   line) - AIC(breakpoint model); positive = breakpoint model fits better.
-#   Holm-corrected p across the four traits given for reference.
-# - Slopes: % change per km towards the tundra on each side of the treeline
-#   (from the log-scale slope b: 100 * (exp(b) - 1)).
-# - Best breakpoint: location found by fitting the breakpoint at many candidate
-#   locations (profile likelihood). ΔAIC vs no breakpoint counts the location
-#   as an extra parameter. Treeline vs best: deviance difference between a
-#   breakpoint at 0 km and at the best location; < 3.84 = the treeline fits
-#   about as well. † = CI reaches the edge of the search range; ‡ = second dip
-#   in the profile; in either case the location should not be interpreted.
+# - Segmented regression (segmented::segmented) of log trait values on distance
+#   to the treeline, without random effects. Breakpoint CI from the standard
+#   error; Davies test of a change in slope anywhere along the gradient;
+#   ΔAIC = AIC(straight line) - AIC(breakpoint model), positive = breakpoint
+#   model better. Slopes as % change per km towards the tundra.
+# - Moran's I of the mean residual per site (inverse-distance weights; I > 0 =
+#   nearby sites have similar residuals). Significant spatial autocorrelation
+#   means the records are not independent, so the CIs and p-values above are
+#   too narrow.
 
-## 8.2. Robustness check table: one model vs separate models per side ----------
+## 8.2. Combined figures --------------------------------------------------------
 
-# Convert the separate-model slopes and their 95% CIs to % per km
-side_check <- results |>
-  mutate(sep_pct_boreal = 100 * (exp(sep_slope_boreal) - 1),
-         sep_pct_boreal_lower = 100 * (exp(sep_slope_boreal - qt(0.975, sep_df_boreal) * sep_SE_boreal) - 1),
-         sep_pct_boreal_upper = 100 * (exp(sep_slope_boreal + qt(0.975, sep_df_boreal) * sep_SE_boreal) - 1),
-         sep_pct_tundra = 100 * (exp(sep_slope_tundra) - 1),
-         sep_pct_tundra_lower = 100 * (exp(sep_slope_tundra - qt(0.975, sep_df_tundra) * sep_SE_tundra) - 1),
-         sep_pct_tundra_upper = 100 * (exp(sep_slope_tundra + qt(0.975, sep_df_tundra) * sep_SE_tundra) - 1))
+# Combine all panels of the segmented regression into single figure
+all_traits_segmented <- plot_grid(plot_seg_ph, plot_seg_sla, plot_seg_leafn, plot_seg_seedmass,
+                                  labels = c("a)", "b)", "c)", "d)"),
+                                  label_size = fig_panel_label, nrow = 2)
 
-# One row per trait and side
-side_check_table <- bind_rows(
-  side_check |>
-    transmute(Trait, Side = "Boreal side",
-              Locations = sep_n_locations_boreal,
-              one_pct = pct_boreal, one_lower = pct_boreal_lower, one_upper = pct_boreal_upper,
-              one_p = p_boreal,
-              sep_pct = sep_pct_boreal, sep_lower = sep_pct_boreal_lower, sep_upper = sep_pct_boreal_upper,
-              sep_p = sep_p_boreal),
-  side_check |>
-    transmute(Trait, Side = "Tundra side",
-              Locations = sep_n_locations_tundra,
-              one_pct = pct_tundra, one_lower = pct_tundra_lower, one_upper = pct_tundra_upper,
-              one_p = p_tundra,
-              sep_pct = sep_pct_tundra, sep_lower = sep_pct_tundra_lower, sep_upper = sep_pct_tundra_upper,
-              sep_p = sep_p_tundra)
-) |>
-  arrange(Trait, Side) |>
-  transmute(Trait, Side, Locations,
-            `One model: % per km (95% CI)` =
-              paste0(sprintf("%.2f", one_pct), " (", sprintf("%.2f", one_lower),
-                     " to ", sprintf("%.2f", one_upper), ")"),
-            `One model: p` = format.pval(one_p, digits = 3, eps = 1e-4),
-            `Separate model: % per km (95% CI)` =
-              paste0(sprintf("%.2f", sep_pct), " (", sprintf("%.2f", sep_lower),
-                     " to ", sprintf("%.2f", sep_upper), ")"),
-            `Separate model: p` = format.pval(sep_p, digits = 3, eps = 1e-4))
+# Save as both .png and .pdf
+ggsave(here("figures", "Figure4_traits_segmented.png"),
+       plot = all_traits_segmented, width = 20, height = 12, dpi = 600)
+ggsave(here("figures", "Figure4_traits_segmented.pdf"),
+       plot = all_traits_segmented, width = 20, height = 12, dpi = 600)
 
-print(tibble::as_tibble(side_check_table), width = Inf)
+## 8.3. Save the prepared data and the correlograms ------------------------------
 
-write.csv(side_check_table, here("data", "derived_data", "TableS_RQ3_side_slopes_check.csv"),
-          row.names = FALSE, fileEncoding = "UTF-8")
+# Used by 3.3_RQ3_GAM.R: the prepared trait data (without the segmented
+# residuals) and the correlograms of the segmented residuals, so that the GAM
+# script can compare them with its own residuals.
+plant_height_data <- plant_height_data |> dplyr::select(-resid_seg)
+sla_data <- sla_data |> dplyr::select(-resid_seg)
+leafn_data <- leafn_data |> dplyr::select(-resid_seg)
+seedmass_data <- seedmass_data |> dplyr::select(-resid_seg)
 
-# Caption notes:
-# - One model: slopes from the breakpoint model at the treeline (the lines on
-#   both sides meet at 0 km; random effects estimated from all data).
-# - Separate model: each side analysed on its own (no assumption that the lines
-#   meet; random effects estimated per side). Similar values show that the
-#   reported slopes do not depend on the lines meeting at the treeline.
-# - These p-values test whether each slope differs from zero, not whether the
-#   two sides differ; that is the breakpoint test in the main table.
+# Save into one file you can then quickly load
+save(plant_height_data, sla_data, leafn_data, seedmass_data,
+     file = here("data", "derived_data", "RQ3_trait_data.RData"))
 
-## 8.3. Combined figure ---------------------------------------------------------
-
-all_traits_plot <- plot_grid(plot_ph, plot_sla, plot_leafn, plot_seedmass,
-                             labels = c("a)", "b)", "c)", "d)"),
-                             label_size = fig_panel_label, nrow = 2)
-
-ggsave(here("figures", "Figure4_traits_treeline.png"),
-       plot = all_traits_plot, width = 20, height = 12, dpi = 600)
-ggsave(here("figures", "Figure4_traits_treeline.pdf"),
-       plot = all_traits_plot, width = 20, height = 12, dpi = 600)
+# Save the correlograms 
+write.csv(bind_rows(correlogram_ph, correlogram_sla, correlogram_leafn, correlogram_seedmass),
+          here("data", "derived_data", "RQ3_correlograms_segmented.csv"), row.names = FALSE)
 
 # END OF SCRIPT ----------------------------------------------------------------
