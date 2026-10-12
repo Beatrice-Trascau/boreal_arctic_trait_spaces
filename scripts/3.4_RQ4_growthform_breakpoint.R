@@ -1,6 +1,6 @@
 ##----------------------------------------------------------------------------##
 # PAPER 3: BOREAL AND ARCTIC PLANT SPECIES TRAIT SPACES 
-# 3.3_RQ4_growthform_breakpoint
+# 3.4_RQ4_growthform_breakpoint
 # This script contains code for breakpoint regression analysis testing whether
 # trait-distance relationships differ on either side of the biome boundary
 # broken down by growth form
