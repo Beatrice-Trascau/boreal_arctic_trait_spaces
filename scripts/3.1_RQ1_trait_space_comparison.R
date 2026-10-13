@@ -399,7 +399,9 @@ set.seed(532826)
 nmds_4trait <- metaMDS(complete_trait_matrix_4trait_std, 
                        distance = "euclidean",
                        k = 2,
-                       trymax = 100)
+                       trymax = 100,
+                       autotransform = FALSE,
+                       wascores = FALSE)
 
 # Get the stress value
 round(nmds_4trait$stress, 3) # 0.147
@@ -436,15 +438,15 @@ set.seed(532826)
 
 # Fit trait vectors to ordination
 trait_fit_4trait <- envfit(nmds_4trait, complete_trait_matrix_4trait_std, 
-                           permutations = 999, na.rm = TRUE)
+                           permutations = 9999, na.rm = TRUE)
 
 # Check values
 print(trait_fit_4trait)
-# NMDS1    NMDS2     r2 Pr(>r)    
-# LeafN        0.82834  0.56022 0.6906  0.001 ***
-# SLA          0.50681  0.86206 0.7791  0.001 ***
-# PlantHeight  0.73091 -0.68247 0.6733  0.001 ***
-# SeedMass     0.86245 -0.50614 0.7135  0.001 ***
+#                   NMDS1    NMDS2     r2 Pr(>r)    
+#   LeafN        0.82834  0.56022 0.6906  1e-04 ***
+#   SLA          0.50681  0.86206 0.7791  1e-04 ***
+#   PlantHeight  0.73091 -0.68247 0.6733  1e-04 ***
+#   SeedMass     0.86245 -0.50614 0.7135  1e-04 ***
 
 # Extract vectors
 trait_vectors_4trait <- as.data.frame(scores(trait_fit_4trait, "vectors"))
@@ -459,28 +461,28 @@ set.seed(532826)
 permanova_4trait_full <- adonis2(complete_trait_matrix_4trait_std ~ caff_biome_category, 
                                  data = nmds_plot_data_4trait,
                                  method = "euclidean",
-                                 permutations = 999)
+                                 permutations = 9999)
 
 # Check PERMANOVA results
 print(permanova_4trait_full)
-# adonis2(formula = complete_trait_matrix_4trait_std ~ caff_biome_category, data = nmds_plot_data_4trait, permutations = 999, method = "euclidean")
+# adonis2(formula = complete_trait_matrix_4trait_std ~ caff_biome_category, data = nmds_plot_data_4trait, permutations = 9999, method = "euclidean")
 # Df SumOfSqs      R2      F Pr(>F)   
-# Model      1     17.3 0.04324 4.4741  0.007 **
+# Model      1     17.3 0.04324 4.4741 0.0047 **
 # Residual  99    382.7 0.95676                 
-# Total    100    400.0 1.00000 
+# Total    100    400.0 1.00000                 
 
 # Test for homogeneity of dispersions
 dispersion_4trait <- betadisper(vegdist(complete_trait_matrix_4trait_std, method = "euclidean"), 
                                 nmds_plot_data_4trait$caff_biome_category)
 set.seed(532826)
-dispersion_test_4trait <- permutest(dispersion_4trait, permutations = 999)
+dispersion_test_4trait <- permutest(dispersion_4trait, permutations = 9999)
 
 # Check the output of the dispersion test
 print(dispersion_test_4trait)
 # Response: Distances
 #            Df Sum Sq Mean Sq      F N.Perm Pr(>F)
-# Groups     1  1.377 1.37663 1.4461    999  0.229
-# Residuals 99 94.243 0.95195 
+# Groups     1  1.377 1.37663 1.4461   9999 0.2272
+# Residuals 99 94.243 0.95195                     
 
 ## 7.6. Create NMDS plot -------------------------------------------------------
 
