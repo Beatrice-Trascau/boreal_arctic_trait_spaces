@@ -1233,7 +1233,7 @@ summary(leafn_biome_lm)
 seed_mass_lm <- lm(SeedMass ~ Biome, data = seedmass_clean)
 summary(seed_mass_lm)
 
-## 11.5 Figure and table of the linear model results ---------------------------
+## 11.5. Figure and table of the linear model results --------------------------
 
 # The biome coefficient is the difference in mean log-trait (tundra - boreal).
 # exp(coefficient) = ratio of geometric means (tundra / boreal), which is
