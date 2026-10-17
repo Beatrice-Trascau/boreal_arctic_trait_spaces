@@ -25,7 +25,7 @@ fig_legend_title <- 18
 fig_annot_text <- 14
 fig_panel_label <- 22
 
-# 1.2. Load packages and data --------------------------------------------------
+## 1.2. Load packages and data -------------------------------------------------
 
 library(here)
 source(here("scripts", "0_setup.R"))
@@ -1132,4 +1132,3 @@ ggsave(here("figures", "FigureS_RQ3_correlograms_LMM.png"),
        plot = all_traits_correlograms_lmm, width = 20, height = 12, dpi = 300)
 
 # END OF SCRIPT ----------------------------------------------------------------
-# - Moran's I of the mean residual per site (inverse-distance weights).
